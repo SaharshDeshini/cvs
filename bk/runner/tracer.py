@@ -9,11 +9,16 @@
 #   {"t":"end","status":"exited|crashed|killed|step_limit|line_timeout|tracer_error","exitCode":0,"signal":null,"line":9}
 import json
 import os
+import sys
 import threading
 import time
 import traceback
 
 import gdb
+
+sys.path.insert(0, os.environ.get("TRACER_DIR", "/opt"))  # heap.py and values.py live next to this script
+from heap import HeapLog  # noqa: E402
+from values import Reader  # noqa: E402
 
 SRC = os.environ["SRC"]
 BIN = os.environ["BIN"]
@@ -35,6 +40,7 @@ STDERR_PATH = os.path.join(OUT_DIR, "stderr.txt")
 STDIN_PATH = os.path.join(OUT_DIR, "stdin.txt")
 TRACE_PATH = os.path.join(OUT_DIR, "trace.jsonl")
 UNBUF_LIB = "/opt/unbuf.so"  # makes the program's stdout unbuffered, so output shows up at the step that printed it
+HEAPLOG_LIB = "/opt/heaplog.so"  # logs malloc/free so the tracer knows each heap block's size and whether it was freed
 USER_FILE = os.path.basename(SRC)
 
 # Written by the GDB event handlers, read by the main loop.
@@ -71,29 +77,9 @@ def first_user_frame(frame):
     return None
 
 
-def describe(value):
-    """Tag a gdb.Value with a kind. Containers/structs are passed through as printer text for now."""
-    try:
-        vtype = value.type.strip_typedefs()
-        code = vtype.code
-        text = str(value)[:MAX_TEXT]
-        entry = {"type": str(value.type)[:200], "value": text}
-        if code == gdb.TYPE_CODE_BOOL:
-            entry["kind"] = "bool"
-        elif code == gdb.TYPE_CODE_FLT:
-            entry["kind"] = "float"
-        elif code == gdb.TYPE_CODE_ENUM:
-            entry["kind"] = "enum"
-        elif code == gdb.TYPE_CODE_INT:
-            entry["kind"] = "char" if vtype.sizeof == 1 else "int"
-        elif code == gdb.TYPE_CODE_PTR:
-            entry["kind"] = "ptr"
-            entry["addr"] = hex(int(value))
-        else:
-            entry["kind"] = "raw"
-        return entry
-    except gdb.error as err:
-        return {"kind": "unavailable", "type": "?", "value": str(err)[:MAX_TEXT]}
+HEAP = HeapLog()
+READER = Reader(HEAP)   # turns gdb values into the typed value tree (values.py)
+LAST_HEAP = {}          # block address -> JSON of the block as last written, so each step carries only the difference
 
 
 def frame_key(frame):
@@ -140,7 +126,7 @@ def read_vars(frame, key):
 
 def read_symbol(sym, frame):
     try:
-        return describe(sym.value(frame))
+        return READER.read(sym.value(frame))
     except gdb.error as err:  # e.g. optimized out / unreadable: one bad variable must not end the trace
         return {"kind": "unavailable", "type": "?", "value": str(err)[:MAX_TEXT]}
 
@@ -170,6 +156,29 @@ def collect_frames(top):
     return frames
 
 
+def heap_delta(heap):
+    """What changed in the heap table since the last record written: {"set": {addr: block}, "del": [addr]} or None.
+    Blocks are compared as JSON so an unchanged block costs nothing in the trace."""
+    changed, encoded = {}, {}
+    for key, block in heap.items():
+        text = json.dumps(block, sort_keys=True)
+        encoded[key] = text
+        if LAST_HEAP.get(key) != text:
+            changed[key] = block
+    removed = [key for key in LAST_HEAP if key not in encoded]
+    LAST_HEAP.clear()
+    LAST_HEAP.update(encoded)
+    return {"set": changed, "del": removed} if changed or removed else None
+
+
+def take_snapshot(top):
+    """Frames plus the heap blocks reachable from them, read in one pass so address bookkeeping is consistent."""
+    HEAP.refresh()
+    READER.begin()
+    frames = collect_frames(top)
+    return frames, heap_delta(READER.finish())
+
+
 def stdout_len():
     try:
         return os.path.getsize(STDOUT_PATH)
@@ -178,7 +187,7 @@ def stdout_len():
 
 
 def write_record(out, record):
-    out.write(json.dumps(record) + "\n")
+    out.write(json.dumps(record, separators=(",", ":")) + "\n")
     WRITES["count"] += 1
     if record["t"] != "step" or WRITES["count"] % FLUSH_EVERY == 0:
         out.flush()
@@ -237,7 +246,10 @@ def read_return_value(rtype, name):
         else:
             bits = int(gdb.parse_and_eval("$rax")) & ((1 << (8 * stripped.sizeof)) - 1)
             value = gdb.Value(bits.to_bytes(stripped.sizeof, "little"), rtype)
-        entry = describe(value)
+        READER.begin()
+        entry = READER.read(value)
+        entry.pop("_at", None)
+        entry.pop("_size", None)
         entry["type"] = str(rtype)[:200]
         return dict(entry, fn=name)
     except (gdb.error, ValueError, OverflowError):
@@ -359,10 +371,12 @@ def trace_loop(out):
             return "exited", line
         line = top.find_sal().line
         began = time.time()
-        frames = collect_frames(top)
+        frames, heap = take_snapshot(top)
         record = {"t": "step", "n": steps, "line": line, "fn": top.name(),
                   "depth": len(frames), "stdoutLen": stdout_len(),
                   "event": step_event(len(frames), previous_depth), "frames": frames}
+        if heap is not None:
+            record["heap"] = heap
         returned, PENDING["returned"] = PENDING["returned"], None
         if returned is not None:
             record["returned"] = returned
@@ -413,8 +427,9 @@ def main():
     gdb.execute("file %s" % BIN)
     gdb.execute("break main")
     stdin = STDIN_PATH if os.path.exists(STDIN_PATH) else "/dev/null"
-    if os.path.exists(UNBUF_LIB):  # a missing library would make the loader print a warning into the user's stderr
-        gdb.execute("set environment LD_PRELOAD %s" % UNBUF_LIB)
+    preload = [path for path in (UNBUF_LIB, HEAPLOG_LIB) if os.path.exists(path)]  # a missing library would make the
+    if preload:                                                                     # loader warn into the user's stderr
+        gdb.execute("set environment LD_PRELOAD %s" % ":".join(preload))
     gdb.execute("run < %s > %s 2> %s" % (stdin, STDOUT_PATH, STDERR_PATH), to_string=True)
     with open(TRACE_PATH, "w") as out:
         outcome, line = guarded_trace(out)

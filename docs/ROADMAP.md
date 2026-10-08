@@ -70,6 +70,25 @@ extra return steps (not measured).
 - Tests: variables/loops/functions/recursion programs; fib(5) depth; highlight unit tests.
 - Acceptance: cases 2, 3, 5, 6 visually correct.
 
+## Phases 5-9 — Arrays, pointers & heap, structs & lists, trees, STL  ✅ built together (2026-10-08)
+They share one mechanism (a typed value tree read from real memory, D-027/D-028), so they were built as one slice:
+- **5 Arrays:** cells with indices, 64-cell window + "+N more", changed-cell flash, loop-variable markers (name-based
+  INFERENCE). Bubble sort and a 1,000-element array verified on screen.
+- **6 Pointers/heap:** `heaplog.so` allocation log; pointer targets resolved from addresses (stack variable, array
+  element, heap block); freed (dangling, dashed red) and leaked (`unreachable`) blocks; bad/uninitialised pointers read
+  safely; double free reported as the SIGABRT it is.
+- **7 Structs/lists:** struct compartments, singly/doubly linked list detection, cycle guard, half-reversed list shown
+  as two lists. Reversal demo verified against the program step by step.
+- **8 Trees:** nested tree layout, left/right slots kept in place, collapse past depth 6, shared nodes flagged.
+- **9 STL:** vector/string/map (and any printer-backed container) through GDB's pretty-printers.
+Results: backend 70 unit + 45 integration, frontend 84 unit + 9 diagram browser checks + the old 16 (all green);
+details and measurements in D-027..D-030.
+Deferred (documented): arrays show the first 64 cells only; a heap of 150+ blocks is cut at 150; per-step cost grows
+with heap size (200-node list ≈ 90 steps/s vs ≈ 750 for primitives; cache unchanged blocks by raw bytes); stack arrows
+cross call-stack rows (routing polish); globals/statics are not shown; `unique_ptr`/`shared_ptr` arrows, set/deque
+specific layouts, and tree shapes with parent pointers (drawn as a general graph) are untested or generic.
+
+(Original plan, kept for reference:)
 ## Phase 5 — Arrays
 - Tasks: array cells, truncation, index highlight.
 - Acceptance: bubble-sort demo correct; 1,000-element array truncates gracefully.

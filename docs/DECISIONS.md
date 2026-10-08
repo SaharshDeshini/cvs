@@ -218,3 +218,50 @@ Format: Decision / Reason / Alternatives / Why rejected / Status. Update Status 
 - Alternatives not taken (INFERENCE): a pty (changes isatty behaviour and merges stderr), `stdbuf` (same LD_PRELOAD
   mechanism, one more dependency).
 - Status: **accepted**.
+
+## D-027 — Heap blocks come from an allocation log (`heaplog.so`), not from guessing at pointers
+- Decision: `bk/runner/heaplog.c` wraps `malloc/calloc/realloc/free` (so `new`/`delete` are covered) and appends
+  `{addr, size, kind}` events to a static 65,536-entry table; the tracer (`heap.py`) replays the new events at every
+  snapshot, keeps freed blocks marked dead, and queries blocks by address (sorted list + bisect). It is preloaded next
+  to `unbuf.so` for the traced program only.
+- Reason (FACT, measured): GDB cannot tell how big a heap block is or whether it was freed. With the log, `new int[5]`
+  is read as five ints, `delete` leaves a block marked `live: false` (pointer `state: "freed"`), and a block that was
+  visible and is no longer reachable is reported `orphan` (leak). A double free is still reported as the SIGABRT it is.
+- Limits: events past 65,536 are lost (`overflowed`); aligned allocations (`aligned_alloc`) are not logged; a block
+  is typed by the first pointer that reaches it (`void*` blocks are not followed).
+- Alternatives not taken (INFERENCE): breakpoints on malloc/free (fire inside library code during `finish`, one stop
+  per allocation), reading glibc chunk headers (sizes are rounded up, no freed state).
+- Status: **accepted**.
+
+## D-028 — Values are a typed tree; the heap travels as per-step deltas; schema stays 1
+- Decision: variable entries gain kinds `array`, `struct`, `string`, `seq`, `map` (plus pointer fields `to`, `state`,
+  `block`, `text`); scalars inside arrays/containers are plain strings (compact). Each step may carry
+  `heap: {full, set, del}`: the tracer sends only blocks whose JSON changed, the processor keeps the running table and
+  emits the whole table on keyframes, the frontend rebuilds it exactly like frames. `at`/`size` (own address) are kept
+  only on entries some pointer in the same snapshot points into.
+- Why schema 1 is kept: every addition is optional; an old-style step still decodes.
+- Why a sanitizer: the entries come from the untrusted side (D-016). `valueSanitizer.js` re-derives every field, caps
+  depth (8), items (64), fields (40), blocks (150) and total entries per step (3,000). A test found that collapsing
+  members past the budget still let a forged container emit one placeholder per member (≈ budget × 64 entries); the
+  loops now stop when the budget is spent.
+- Status: **accepted**.
+
+## D-029 — Shapes are detected from the data: self-pointer fields decide list / tree / graph
+- Decision: a heap struct with exactly one pointer field to its own type is a list node, with two a tree node, or a
+  doubly linked node when the pointers are inverses of each other (`a.f1 == b` and `b.f2 == a`); three or more is a
+  general graph. Field names (`next`, `prev`, `left`...) only break ties and the no-evidence case. Connected pieces
+  are found with union-find; the head is the node nothing else on the spine points at. Trees past depth 6 collapse into
+  "N more nodes"; a node reachable from two parents is drawn once and flagged `shared`; cycles stop the chain.
+- Reason (INFERENCE, checked on the demo programs): structure beats naming, and a half-reversed list correctly
+  shows as two lists.
+- Status: **accepted**.
+
+## D-030 — Arrows are measured from the real layout, and are pure geometry
+- Decision: components render dots (`data-src`) and boxes (`data-key`); `PointerArrows` measures both with
+  `getBoundingClientRect` (re-measured on resize, nested scroll and step change) and `arrowPath` (pure, unit tested)
+  picks the curve. Arrow targets come from addresses (`memoryGraph.buildResolver`: innermost box containing the
+  address, ties broken by the pointer's target type). Loop-variable markers under array cells are an INFERENCE from
+  names (`i`, `j`, `lo`, `mid`...) and are labelled as such in code.
+- Known polish gap: stack arrows cross the rows of the call stack on their way down; a routed "bus" along the right
+  edge would be cleaner (Phase 12).
+- Status: **accepted**.

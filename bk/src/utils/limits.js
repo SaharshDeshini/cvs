@@ -6,6 +6,10 @@ const LIMITS = Object.freeze({
   keyframeEvery: 50,
   maxFramesPerStep: 64,
   maxVarsPerFrame: 200,
+  maxValueNodes: 3000, // entries (values, fields, items) in one step; the tracer stops at 2,500
+  maxItems: 64, // array / container elements shown per value (the tracer's window)
+  maxFields: 40,
+  maxHeapBlocks: 150,
   maxTextLength: 1000,
   maxTraceBytes: 5 * 1024 * 1024, // an honest 5,000-step trace is well under this
   maxOutputBytes: 1024 * 1024, // each of stdout / stderr / compiler output

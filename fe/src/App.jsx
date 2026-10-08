@@ -1,10 +1,14 @@
 import { Component, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import CodeEditor from "./components/CodeEditor";
 import Controls from "./components/Controls";
+import HeapView from "./components/HeapView";
 import OutputPanel from "./components/OutputPanel";
+import PointerArrows from "./components/PointerArrows";
 import StackView from "./components/StackView";
 import StatusBanner from "./components/StatusBanner";
+import { DiagramContext } from "./components/ValueView";
 import { requestTrace } from "./lib/api";
+import { buildDiagram } from "./lib/memoryGraph";
 import { initialState, playerReducer, stepDelayMs } from "./lib/playerReducer";
 import { stdoutAt } from "./lib/reconstruct";
 import { chipFor } from "./lib/status";
@@ -74,6 +78,22 @@ class VisualizationBoundary extends Component {
   }
 }
 
+/** The call stack and the heap in one box, with the pointer arrows drawn over both. */
+function Diagram({ view, previous }) {
+  const containerRef = useRef(null);
+  const model = useMemo(() => buildDiagram(view, previous), [view, previous]);
+  const context = useMemo(() => ({ changed: model.changed, sources: new Set(model.edges.map((edge) => edge.from)) }), [model]);
+  return (
+    <DiagramContext.Provider value={context}>
+      <div className="diagram" ref={containerRef}>
+        <StackView view={view} />
+        {model.plan.length > 0 && <HeapView plan={model.plan} heap={view.heap} />}
+        <PointerArrows containerRef={containerRef} edges={model.edges} changed={model.changed} layoutKey={view.n} />
+      </div>
+    </DiagramContext.Provider>
+  );
+}
+
 function Visualization({ state, isStale }) {
   const { trace, views, index } = state;
   const view = views[index];
@@ -84,7 +104,7 @@ function Visualization({ state, isStale }) {
       <StatusBanner trace={trace} />
       {hasNothing && <div className="banner is-notice" role="status">The program finished without any steps to show.</div>}
       {isStale && <div className="banner is-notice" role="status">The code changed since this run. Press Run to trace the new version.</div>}
-      {view && <StackView view={view} />}
+      {view && <Diagram view={view} previous={views[index - 1] ?? null} />}
       {(view || trace.stdout || trace.stderr) && (
         <OutputPanel
           stdout={stdoutAt(trace, views, index)}

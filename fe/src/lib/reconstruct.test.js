@@ -116,6 +116,49 @@ describe("stdoutAt", () => {
   });
 });
 
+describe("heap table", () => {
+  const block = (size) => ({ kind: "block", size, live: true, ty: "Node" });
+  const heapStep = (n, heap, extra = {}) => step(n, 1, [], { heap, ...extra });
+
+  it("is empty for a trace that never allocates", () => {
+    const views = reconstruct({ steps: [step(0, 1, [frame(0, "main", 1, {})], { keyframe: true }), step(1, 1, [])] });
+    expect(views[0].heap).toEqual({});
+    expect(views[1].heap).toEqual({});
+  });
+
+  it("applies deltas in order and carries the table over steps that have none", () => {
+    const views = reconstruct({ steps: [
+      step(0, 1, [], { keyframe: true }),
+      heapStep(1, { full: false, set: { "0x10": block(16), "0x20": block(16) }, del: [] }),
+      step(2, 1, []),
+      heapStep(3, { full: false, set: { "0x10": block(32) }, del: ["0x20"] }),
+    ] });
+    expect(Object.keys(views[1].heap)).toEqual(["0x10", "0x20"]);
+    expect(views[2].heap).toBe(views[1].heap);
+    expect(Object.keys(views[3].heap)).toEqual(["0x10"]);
+    expect(views[3].heap["0x10"].size).toBe(32);
+  });
+
+  it("a keyframe replaces whatever was there, so scrubbing from any keyframe is exact", () => {
+    const views = reconstruct({ steps: [
+      step(0, 1, [], { keyframe: true, heap: { full: true, set: { "0x10": block(16) }, del: [] } }),
+      step(1, 1, [], { keyframe: true }),
+    ] });
+    expect(Object.keys(views[0].heap)).toEqual(["0x10"]);
+    expect(views[1].heap).toEqual({});
+  });
+
+  it("does not mutate the earlier view when a later delta arrives", () => {
+    const views = reconstruct({ steps: [
+      step(0, 1, [], { keyframe: true }),
+      heapStep(1, { full: false, set: { "0x10": block(16) }, del: [] }),
+      heapStep(2, { full: false, set: {}, del: ["0x10"] }),
+    ] });
+    expect(Object.keys(views[1].heap)).toEqual(["0x10"]);
+    expect(views[2].heap).toEqual({});
+  });
+});
+
 describe("isChanged", () => {
   it("matches a variable path or a whole-frame change", () => {
     expect(isChanged(["f1.vars.n"], 1, "n")).toBe(true);

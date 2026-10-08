@@ -1,26 +1,29 @@
-import { isChanged } from "../lib/reconstruct";
+import { indexMarkers } from "../lib/arrayMarkers";
+import { stackKey } from "../lib/valueKeys";
+import ValueView from "./ValueView";
 
-function formatValue(entry) {
+const COMPOSITE_KINDS = new Set(["array", "struct", "seq", "map"]);
+
+function formatReturned(entry) {
   if (entry.kind === "ptr") return entry.addr === "0x0" ? "null" : entry.value;
   return entry.value;
 }
 
-function VariableRow({ name, entry, changed }) {
-  // key on the value so the flash animation restarts whenever the value changes
+function VariableRow({ name, entry, path, vars }) {
+  const isComposite = COMPOSITE_KINDS.has(entry.kind);
+  const markers = entry.kind === "array" ? indexMarkers(vars, entry.len) : undefined;
   return (
-    <li className="var-row">
+    <li className={`var-row${isComposite ? " is-composite" : ""}`}>
       <span className="var-name">{name}</span>
       <span className="var-type">{entry.type}</span>
-      <span key={entry.value} className={`var-value kind-${entry.kind}${changed ? " is-changed" : ""}`}>
-        {formatValue(entry)}
-      </span>
+      <div className="var-body"><ValueView entry={entry} path={path} markers={markers} /></div>
     </li>
   );
 }
 
 /** What the call that just finished handed back; shown on the frame that received it (the new innermost one). */
 function ReturnedNote({ returned }) {
-  const text = formatValue(returned);
+  const text = formatReturned(returned);
   return (
     <p className="frame-returned" aria-label={`${returned.fn} returned ${text}`}>
       <span className="returned-arrow" aria-hidden="true">↩</span>
@@ -31,7 +34,7 @@ function ReturnedNote({ returned }) {
   );
 }
 
-function FrameCard({ frame, frameIndex, isCurrent, changes, returned }) {
+function FrameCard({ frame, frameIndex, isCurrent, returned }) {
   const names = Object.keys(frame.vars);
   return (
     <section className={`frame-card${isCurrent ? " is-current" : ""}`} aria-label={`${frame.fn} frame`}>
@@ -45,7 +48,7 @@ function FrameCard({ frame, frameIndex, isCurrent, changes, returned }) {
       ) : (
         <ul className="var-list">
           {names.map((name) => (
-            <VariableRow key={name} name={name} entry={frame.vars[name]} changed={isChanged(changes, frameIndex, name)} />
+            <VariableRow key={name} name={name} entry={frame.vars[name]} path={stackKey(frameIndex, name)} vars={frame.vars} />
           ))}
         </ul>
       )}
@@ -69,7 +72,6 @@ export default function StackView({ view }) {
               frame={frame}
               frameIndex={frameIndex}
               isCurrent={frameIndex === frames.length - 1}
-              changes={view.changes}
               returned={view.returned}
             />
           ))}

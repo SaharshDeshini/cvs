@@ -333,3 +333,141 @@ test("no runner containers are left behind", () => {
   const out = execFileSync("docker", ["ps", "-a", "--filter", "name=cvis-", "--format", "{{.Names}}"]).toString().trim();
   assert.equal(out, "", `leftover containers: ${out}`);
 });
+
+// ── data structures: arrays, pointers, heap blocks, STL (Phases 5-9) ─────────────────────────────────────────────
+/** Replays the heap deltas of an encoded trace up to and including `index` (a keyframe without `heap` = empty heap). */
+function heapAt(trace, index) {
+  let table = {};
+  trace.steps.slice(0, index + 1).forEach((step) => {
+    if (step.keyframe) table = {};
+    if (!step.heap) return;
+    if (step.heap.full) table = {};
+    step.heap.del.forEach((address) => delete table[address]);
+    Object.assign(table, step.heap.set);
+  });
+  return table;
+}
+/** The complete variables of the innermost frame at `index`, applying frame deltas like the frontend does. */
+function varsAt(trace, index) {
+  let frames = [];
+  trace.steps.slice(0, index + 1).forEach((step) => {
+    const next = step.keyframe ? [] : frames.slice(0, step.depth);
+    step.frames.forEach((frame) => { next[Number(frame.id.slice(1))] = frame; });
+    frames = next;
+  });
+  return frames.at(-1)?.vars ?? {};
+}
+const last = (trace) => trace.steps.length - 1;
+
+test("arrays: bubble sort shows the array as cells and ends sorted", async () => {
+  const { body } = await traceFixture("bubble");
+  assert.equal(body.status, "ok");
+  const finalVars = varsAt(body, last(body));
+  assert.equal(finalVars.a.kind, "array");
+  assert.deepEqual(finalVars.a.items, ["1", "2", "3", "5", "7", "9"]);
+  assert.equal(finalVars.a.len, 6);
+  assert.equal(finalVars.a.elemKind, "int");
+  assert.equal(body.stdout, "1\n");
+});
+
+test("arrays: a 1,000-element array is cut to a window and says how much is hidden", async () => {
+  const { body } = await traceFixture("bigarray");
+  assert.equal(body.status, "ok");
+  const { big } = varsAt(body, last(body));
+  assert.equal(big.len, 1000);
+  assert.equal(big.items.length, 64);
+  assert.equal(big.more, 936);
+  assert.equal(big.items[10], "20");
+});
+
+test("pointers: swap through pointers, pointer arithmetic into an array, delete leaves a freed block", async () => {
+  const { body } = await traceFixture("pointers");
+  assert.equal(body.status, "ok");
+  const vars = varsAt(body, last(body));
+  assert.deepEqual([vars.x.value, vars.y.value], ["2", "1"]);
+  const arrayStart = Number.parseInt(vars.arr.at, 16);
+  assert.equal(Number.parseInt(vars.p.addr, 16), arrayStart + 2 * 4, "p = arr + 2 points at the third int");
+  assert.equal(vars.gone.state, "freed");
+  assert.equal(heapAt(body, last(body))[vars.gone.block].live, false);
+});
+
+test("heap: a linked list is built block by block and its pointers lead from head to tail", async () => {
+  const { body } = await traceFixture("list");
+  assert.equal(body.status, "ok");
+  const table = heapAt(body, last(body));
+  assert.equal(Object.keys(table).length, 3);
+  const { head } = varsAt(body, last(body));
+  const values = [];
+  for (let address = head.block, hops = 0; address && hops < 5; hops += 1) {
+    const node = table[address].v;
+    values.push(node.fields.find((f) => f.name === "value").v.value);
+    address = node.fields.find((f) => f.name === "next").v.block;
+  }
+  assert.deepEqual(values, ["1", "2", "3"], "after reverse() the list reads 1, 2, 3");
+  assert.ok(body.steps.some((step) => step.heap && step.heap.full === false), "growth is carried as deltas");
+});
+
+test("heap: a binary search tree keeps its left and right children apart", async () => {
+  const { body } = await traceFixture("bst");
+  assert.equal(body.status, "ok");
+  const table = heapAt(body, last(body));
+  const field = (address, name) => table[address].v.fields.find((f) => f.name === name).v;
+  const { root } = varsAt(body, last(body));
+  assert.equal(Object.keys(table).length, 5);
+  assert.equal(field(root.block, "key").value, "50");
+  assert.equal(field(field(root.block, "left").block, "key").value, "30");
+  assert.equal(field(field(root.block, "right").block, "key").value, "70");
+});
+
+test("heap: a block nobody points at any more is reported as leaked (orphan)", async () => {
+  const { body } = await traceFixture("leak");
+  assert.equal(body.status, "ok");
+  const table = heapAt(body, last(body));
+  const blocks = Object.values(table);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].orphan, true);
+  assert.equal(blocks[0].live, true);
+});
+
+test("a double free is reported as the crash it is, and the tracer survives to say so", async () => {
+  const { body } = await traceFixture("double_free");
+  assert.equal(body.status, "runtime_error");
+  assert.equal(body.signal, "SIGABRT");
+  assert.ok(body.steps.length >= 3, "the steps before the crash are kept");
+});
+
+test("uninitialised pointers are read safely: no tracer error, whatever garbage they hold", async () => {
+  const { body } = await traceFixture("wild_pointers");
+  assert.equal(body.status, "ok");
+  const vars = varsAt(body, last(body));
+  assert.equal(vars.wild.kind, "ptr");
+  assert.equal(vars.text.kind, "ptr");
+});
+
+test("STL: vector, string and map are read through GDB's printers", async () => {
+  const { body } = await traceFixture("stl");
+  assert.equal(body.status, "ok");
+  const { v, s, m } = varsAt(body, last(body));
+  assert.deepEqual([v.kind, v.container, v.len, v.items], ["seq", "vector", 4, ["3", "1", "2", "9"]]);
+  assert.deepEqual([s.kind, s.value], ["string", "hello"]);
+  assert.deepEqual([m.kind, m.len], ["map", 2]);
+  assert.deepEqual(m.items.map((pair) => [pair.k.value, pair.v]), [["one", "1"], ["two", "2"]]);
+});
+
+test("STL: a container that prints no size (std::list) still reports its real length past the window", async () => {
+  const { body } = await traceFixture("list_stl");
+  assert.equal(body.status, "ok");
+  const { numbers } = varsAt(body, last(body));
+  assert.equal(numbers.container, "list");
+  assert.equal(numbers.len, 100);
+  assert.equal(numbers.items.length, 64);
+  assert.equal(numbers.more, 36);
+});
+
+test("heap: a pointer into a block allocated over recycled memory is live, not 'freed'", async () => {
+  const { body } = await traceFixture("heap_reuse");
+  assert.equal(body.status, "ok");
+  const { mid } = varsAt(body, last(body));
+  assert.equal(mid.state, "heap");
+  assert.equal(heapAt(body, last(body))[mid.block].live, true);
+});

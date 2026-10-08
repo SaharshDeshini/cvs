@@ -1,13 +1,12 @@
 const { LIMITS } = require("../utils/limits");
+const { sanitizeValue, sanitizeHeapDelta, newBudget } = require("./valueSanitizer");
 
-const SCHEMA_VERSION = 1;
-const VALUE_KINDS = new Set(["int", "float", "bool", "char", "enum", "ptr", "raw", "unavailable"]);
+const SCHEMA_VERSION = 1; // v1 stays: the value kinds and the per-step `heap` delta are additive (D-027)
 const STEP_EVENTS = new Set(["step", "call", "return"]);
 const END_STATUSES = new Set(["exited", "crashed", "killed", "step_limit", "line_timeout", "tracer_error"]);
 const SIGNAL_NAME = /^SIG[A-Z0-9]{1,12}$/;
 const MAX_EXIT_CODE = 255;
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
-const HEX_ADDRESS = /^0x[0-9a-f]{1,16}$/;
 const COMPILER_DIAGNOSTIC = /^(?:\/tmp\/)?main\.cpp:(\d+):(\d+): (fatal error|error|warning|note): (.*)$/;
 const MAX_COMPILE_DIAGNOSTICS = 50;
 const MAX_LINE_NUMBER = 1000000;
@@ -50,23 +49,12 @@ function parseRecords(traceText) {
   return { records, dropped };
 }
 
-function sanitizeVar(entry) {
-  if (entry === null || typeof entry !== "object" || !VALUE_KINDS.has(entry.kind)) return null;
-  const clean = {
-    kind: entry.kind,
-    type: clip(entry.type, 200) ?? "?",
-    value: clip(entry.value, LIMITS.maxTextLength) ?? "",
-  };
-  if (typeof entry.addr === "string" && HEX_ADDRESS.test(entry.addr)) clean.addr = entry.addr;
-  return clean;
-}
-
-function sanitizeFrame(frame) {
+function sanitizeFrame(frame, budget) {
   if (frame === null || typeof frame !== "object" || !isInt(frame.line, 0, MAX_LINE_NUMBER)) return null;
   const vars = Object.create(null); // names come from user code: never a plain object ("__proto__")
   const entries = frame.vars && typeof frame.vars === "object" ? Object.entries(frame.vars) : [];
   for (const [name, entry] of entries.slice(0, LIMITS.maxVarsPerFrame)) {
-    const clean = IDENTIFIER.test(name) ? sanitizeVar(entry) : null;
+    const clean = IDENTIFIER.test(name) ? sanitizeValue(entry, budget) : null;
     if (clean) vars[name] = clean;
   }
   return { fn: clip(frame.fn, 200) ?? "?", line: frame.line, vars };
@@ -74,7 +62,7 @@ function sanitizeFrame(frame) {
 
 /** What the function that just returned handed back (primitives only). Forged input becomes null, never a guess. */
 function sanitizeReturned(entry) {
-  const value = sanitizeVar(entry);
+  const value = sanitizeValue(entry);
   if (value === null) return null;
   return { fn: clip(entry.fn, 200) ?? "?", ...value };
 }
@@ -82,7 +70,8 @@ function sanitizeReturned(entry) {
 function sanitizeStep(record) {
   if (!isInt(record.n, 0, LIMITS.maxSteps) || !isInt(record.line, 0, MAX_LINE_NUMBER)) return null;
   if (!Array.isArray(record.frames) || record.frames.length > LIMITS.maxFramesPerStep) return null;
-  const frames = record.frames.map(sanitizeFrame);
+  const budget = newBudget(); // one budget for frames and heap together: a step is bounded as a whole
+  const frames = record.frames.map((frame) => sanitizeFrame(frame, budget));
   if (frames.some((frame) => frame === null)) return null;
   return {
     n: record.n,
@@ -93,6 +82,7 @@ function sanitizeStep(record) {
     stdoutLen: isInt(record.stdoutLen, 0, Number.MAX_SAFE_INTEGER) ? Math.min(record.stdoutLen, LIMITS.maxOutputBytes) : 0,
     frames,
     returned: sanitizeReturned(record.returned),
+    heapDelta: sanitizeHeapDelta(record.heap, budget),
   };
 }
 
@@ -127,18 +117,38 @@ function diffFrames(previousFrames, frames) {
   return { changes, changedFrames };
 }
 
+/**
+ * Applies a step's heap delta to the running table and returns what the step carries: keyframes the whole table (a
+ * keyframe without `heap` means an empty heap), other steps only the change, or nothing when it did not change.
+ * Addresses are validated hex strings (valueSanitizer), so they are safe object keys.
+ */
+function encodeHeap(table, delta, isKeyframe) {
+  if (delta) {
+    delta.del.forEach((address) => table.delete(address));
+    delta.set.forEach((block, address) => table.set(address, block));
+    // the honest tracer never holds more than maxHeapBlocks; a forged stream must not grow the table (and every
+    // keyframe that re-emits it) without bound, so the oldest blocks are dropped first
+    while (table.size > LIMITS.maxHeapBlocks) table.delete(table.keys().next().value);
+  }
+  if (isKeyframe) return table.size > 0 ? { full: true, set: Object.fromEntries(table), del: [] } : null;
+  return delta ? { full: false, set: Object.fromEntries(delta.set), del: delta.del } : null;
+}
+
 /** Keyframes carry every frame; other steps carry only frames that changed. `depth` says how many are live. */
 function encodeSteps(steps, skips) {
   let previousFrames = [];
+  const heapTable = new Map();
   return steps.map((step, position) => {
+    const { heapDelta, ...rest } = step;
     const { changes, changedFrames } = diffFrames(previousFrames, step.frames);
     const isKeyframe = position % LIMITS.keyframeEvery === 0;
     const encoded = {
-      ...step,
+      ...rest,
       frames: isKeyframe ? step.frames.map((frame, index) => ({ id: `f${index}`, ...frame })) : changedFrames,
       keyframe: isKeyframe,
       changes,
       skipped: skips.get(step.n) ?? null,
+      heap: encodeHeap(heapTable, heapDelta, isKeyframe),
     };
     previousFrames = step.frames;
     return encoded;

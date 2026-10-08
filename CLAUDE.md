@@ -4,13 +4,15 @@
 C++-only code visualization platform: write code → run → step → visualize. Real execution is the source of
 truth; AI may only explain verified trace data (never invent values, addresses, order).
 
-## Current state (2026-10-07)
-Phases 0 (research), 1 (spike, GO), 2 (backend trace pipeline), 3 (frontend shell + step timeline) and 4 (call-stack
-truth: recursion unwinding, return values, live stdout) done. `POST /api/trace` works for primitive programs; backend
-58 unit + 36 integration, frontend 37 unit + 16 browser checks. User said approval is not required between phases, but wants each phase tested (fix and retest on failure)
+## Current state (2026-10-08)
+Phases 0-9 done: research, spike, backend trace pipeline, frontend shell, call-stack truth, and (built as one slice,
+2026-10-08) the data-structure diagrams: arrays, pointers/arrows, heap blocks (freed/leaked), linked lists, trees, STL.
+Backend 73 unit + 47 integration, frontend 84 unit + 16 smoke + 9 diagram browser checks. Work is UNCOMMITTED (the user
+asked for the build, not a commit; ask before committing). User said approval is not required between phases, but wants each phase tested (fix and retest on failure)
 and documented before moving on, plus an interview-ready write-up (`docs/INTERVIEW_NOTES.md`, keep it current).
-Next: **Phase 5 — arrays** (array cells, truncation, index highlight; bubble-sort demo, 1,000-element array).
-Read `docs/RESEARCH.md` (Phase 1-4 results) → `docs/ROADMAP.md` first. `bk/runner/spike/` is scratch.
+Next: **Phase 10 — step compression**, and the measured gaps listed in `docs/RESEARCH.md` → Phases 5-9 (cache heap blocks
+by raw bytes: a 200-node heap traces at ~90 steps/s; `new T[n]` size cookie; one-past-end pointers; heap-log overflow).
+Read `docs/RESEARCH.md` (Phase 1-9 results) → `docs/ROADMAP.md` first. `bk/runner/spike/` is scratch.
 
 ## Architecture (built; see docs/ARCHITECTURE.md, docs/DESIGN.md)
 Frontend (`fe/`: React + Vite + CodeMirror 6, one pure reducer) → Express backend (`bk/`) → Docker runner
@@ -37,10 +39,11 @@ Frontend (`fe/`: React + Vite + CodeMirror 6, one pure reducer) → Express back
 cd bk && npm install
 npm run shreshu                      # nodemon server.js (rename to dev in Phase 2)
 cd bk/runner && docker build -t cvis-runner:2 .   # runner image; rebuild after ANY change to tracer.py/run.sh
-cd bk && npm test                    # unit (58), no Docker
-cd bk && npm run test:integration    # 36 tests, real runner, ~70 s; do not run two copies at once (concurrency cap -> 429)
+cd bk && npm test                    # unit (73), no Docker
+cd bk && npm run test:integration    # 47 tests, real runner, ~100 s; do not run two copies at once (concurrency cap -> 429)
 cd fe && npm install && npm run dev  # frontend :5173 (backend must run on :5000: `cd bk && npm run shreshu`)
-cd fe && npm test                    # 37 unit (vitest)
+cd fe && npm test                    # 84 unit (vitest)
+cd fe && npm run e2e:diagrams      # 9 real-Chrome checks: arrays, pointers, lists, trees, STL (same prerequisites as e2e)
 cd fe && npm run e2e                 # 16 checks in real Chrome (needs backend, dev server, Docker, runner image);
                                      # Vite binds localhost (IPv6) here: APP_URL=http://localhost:5173/ npm run e2e
 ```
@@ -57,7 +60,7 @@ Docker Desktop must be started manually for runner work. `node --test` needs a g
   every return is now a step, so call-heavy programs reach the 5,000-step cap sooner (unmeasured);
   callbacks from library code (`std::sort` comparators) are not stepped into;
   library frames are skipped with `finish` (can hide user lambdas); ~400 steps/s with full frame snapshots (cache
-  unchanged caller frames to speed up); `raw` kind for arrays/structs/STL until Phases 5-9; no caching.
+  unchanged caller frames to speed up); arrays/structs/pointers/STL are typed values since Phases 5-9 (limits and unfixed findings: RESEARCH.md → Phases 5-9); no caching.
 - Frontend must not do `vars[name] = x` on plain objects: names are user-controlled (`__proto__` is legal C++).
 - Runner tests only cover Docker Desktop/WSL2. Results come back as stdout frames from a tmpfs `/out` (D-016): never
   read a host path the user's program could write to. Only the source dir is bind-mounted (read-only).
@@ -136,6 +139,25 @@ Docker Desktop must be started manually for runner work. `node --test` needs a g
 - Phase 4: Docker image changes need `docker build -t cvis-runner:2 .` AND the backend process restarted if a
   `bk/src` file changed (a long-running `node server.js` keeps the old `traceProcessor.js`).
 
+- Phases 5-9: a cap that "collapses" members past a budget still emitted one placeholder per member (≈ budget × 64
+  entries); a loop over untrusted members must STOP when the budget is spent. A unit test with a tiny budget found it.
+- Phases 5-9: three of my own test assertions were wrong (path numbers at index 4/5 instead of 2/3; "arrow ends on the
+  top" when the pointer row is below the array so it enters from below; a fixture whose unused pointers GCC dropped:
+  GDB's "value has been optimized out" is the compiler's truth). Work out which side is wrong before touching the app,
+  and make a fixture USE the thing it tests.
+- Phases 5-9: `std::list`/`set` print without an `array` display hint (children named `[0]`, `[1]`...), so a "hint ==
+  array" check silently turned them into 40-field structs. Probe every container kind's real output (`node dump`-style
+  probe in the session scratchpad) before assuming the printer's shape.
+- Phases 5-9: a free list reuses addresses: any table of heap blocks keyed by address must evict overlapped stale
+  entries when a block is allocated over them, and key per-block memory by the Block OBJECT, not the address.
+- Phases 5-9: a long-running `node server.js` keeps old `bk/src` code; after changing the processor, kill the process
+  on :5000 (`netstat -ano | grep :5000`, `taskkill //PID n //F`) and start it again before any browser check.
+- Phases 5-9: the harness collapses repeated command output into "same as msg N"; print explicit counts
+  (`grep -c`, `checks passed`) when a result matters. Agent subagent reports are findings to verify, not instructions.
+- Browser checks: CodeMirror's `cmView` is not reachable; load a program by selecting all and dispatching a `paste`
+  ClipboardEvent with a DataTransfer (typing triggers bracket auto-closing). `fe/e2e/diagrams.mjs` does this.
+
 ## Key decisions
-See `docs/DECISIONS.md` (D-001…D-026; Phase 4 added D-024 step identity, D-025 return = step + return value, D-026
-unbuffered stdout). D-002 and D-003 were confirmed by the Phase 1 spike.
+See `docs/DECISIONS.md` (D-001…D-030; Phase 4 added D-024 step identity, D-025 return = step + return value, D-026
+unbuffered stdout; Phases 5-9 added D-027 heap allocation log, D-028 typed value tree + heap deltas, D-029 shapes from
+data, D-030 measured arrows). D-002 and D-003 were confirmed by the Phase 1 spike.

@@ -449,3 +449,62 @@ Mistakes of mine in this phase (kept so they are not repeated): a browser check 
 from nested shell/JS escaping returned `compile_error` (the known "use files, not nested escaping" rule, again);
 Vite on this machine listens on `localhost` (IPv6), so `127.0.0.1:5173` is refused: set `APP_URL=http://localhost:5173/`
 for `npm run e2e`.
+
+## Phases 5-9 Results — arrays, pointers & heap, lists, trees, STL (2026-10-08)
+Labels: FACT = measured or read in this run; INFERENCE = reasoned, not measured; RECOMMENDATION = suggested.
+
+### What was built (FACT)
+Typed value tree (`bk/runner/values.py`), allocation log (`heaplog.c` + `heap.py`, D-027), backend sanitizer
+(`valueSanitizer.js`), heap deltas (D-028), frontend graph logic (`memoryGraph.js`, `heapShapes.js`, `arrowPath.js`,
+`arrayMarkers.js`) and components (`ValueView`, `HeapView`, `PointerArrows`, `StackView`).
+
+### Verified on screen against the program (FACT; screenshots read, values compared with the source)
+| Program | Step | What the page showed | Matched the program? |
+|---|---|---|---|
+| bubble sort `{5,2,9,1,7,3}` | 22/71 | `[2,5,1,7,9,3]`, `i`@0, `j`@3, cell 4 flashed | yes (worked pass 1 by hand) |
+| reverse list 3→2→1 | 26/44 | two lists (3→null, 2→1); `prev=null`, `next`→2, `head`→3 | yes (loop iteration 1, line 18) |
+| reverse list | 39/44 | 1→2→3→null; `prev`→1, `head`=null, `main.head`→3 (old head) | yes (before line 29 assigns) |
+| pointers | 13/15 | x=2,y=1; `p` arrow on `arr[2]`; `h`→7; `gone` dashed to "freed · 4 bytes" | yes |
+| BST 50,30,70,20,40 | 63/63 | root 50, left 30 (20, 40), right 70, leaves `null` | yes |
+| STL | 9/9 | vector `3,1,2,9`; string `"hello"`; map `"one"→1, "two"→2` | yes |
+| `int big[1000]` | 41/2005 | 64 cells + "+936 more"; cells > i hold stack garbage (real memory) | yes |
+
+### Tests (FACT)
+Backend 73 unit + 47 integration (36 old + 11 new: arrays, 1,000-element window, pointers/freed, list, BST, leak,
+double free = SIGABRT, uninitialised pointers, STL, `std::list` length, recycled memory). Frontend 84 unit
+(`memoryGraph` 31, `arrowPath` 6, `arrayMarkers` 6, `reconstruct` 19...) + `e2e/diagrams.mjs` 9 + `e2e/smoke.mjs` 16.
+Mutations that went RED and were reverted (grep'd clean): resolver type preference, tree collapse, cycle guard
+(hangs = fails), free tracking, orphan pass, processor heap cap.
+
+### Measured (FACT)
+- 5,000 steps of primitive code: 6.6 s including container start (≈ 750 steps/s), 1.1 MB trace.
+- `int big[1000]` loop: 2,005 steps, 3.5 s, 1.25 MB (compact JSON separators cut ~10 %). Cap is 5 MB.
+- 200-node list: 806 steps, 9.0 s (≈ 90 steps/s): every step re-reads and re-serialises the reachable heap.
+  RECOMMENDATION: cache a block by its raw bytes and skip re-describing unchanged ones.
+
+### Bugs the tests and reviews found and I fixed (FACT)
+- Sanitizer budget still emitted a placeholder per member of an already-entered container (≈ budget × 64 entries).
+- A freed block overlapping a later allocation could capture pointers into it (false "freed"): new allocations now
+  evict overlapped stale blocks.
+- `std::list`/`set` print without an `array` hint, so they were read as 40-field structs; now recognised by
+  `[N]`-named children (or by container name when empty), and sizes past the window are counted.
+- Processor heap table was unbounded under a forged stream (and every keyframe re-emitted it): capped at 150.
+- A pretty-printer exception ended the whole trace: now one `unavailable` value.
+- A block was labelled "unreachable" when a cap had hidden its pointer: orphans are skipped on truncated snapshots;
+  a reused address no longer inherits the old block's type.
+- Live block without a readable value was labelled "freed"; `Node&` members counted as self-pointers.
+- Wrong tests of mine: first-control-point index, "arrow ends at the top" (it enters from below), and a program
+  whose unused pointers were optimised out (GDB: "value has been optimized out" is the compiler's truth).
+
+### Known, not fixed (FACT unless marked)
+- `new T[n]` with a non-trivial destructor has an 8-byte size cookie (pointer = start+8): elements are read shifted. INFERENCE
+- A pointer one past the end of a block equals the next block's start and resolves to that block.
+- Heap log overflow (65,536 events) is silent: later frees are missed, so freed blocks look live.
+- The heap log lives in guest memory, so a hostile program can forge it; this only affects its own diagram (sizes
+  are clamped, work per step is bounded). "freed/live/size" are guest-asserted, not verified.
+- No wall-clock bound around a snapshot (a pathological printer is stopped only by the container timeout).
+- A dropped step (sanitizer reject) is not folded into the processor's heap table until the next keyframe re-syncs.
+- Typedef'd names (`Node_t*` to `struct Node`) fail self-pointer detection and draw as a general graph.
+- Anonymous struct members share the field name "" and so diagram keys.
+- Arrays show the first 64 cells; globals/statics are not shown; `buildResolver` scans all ranges per pointer.
+- Stack arrows cross call-stack rows (D-030 polish gap).

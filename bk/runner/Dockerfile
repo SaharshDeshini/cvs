@@ -6,10 +6,12 @@ RUN apt-get update \
  && useradd --create-home --uid 10001 runner \
  && find / -xdev -perm -4000 -exec chmod u-s {} + 2>/dev/null || true
 
-COPY unbuf.c /tmp/unbuf.c
-RUN gcc -shared -fPIC -O2 -o /opt/unbuf.so /tmp/unbuf.c && rm /tmp/unbuf.c
+COPY unbuf.c heaplog.c /tmp/
+RUN gcc -shared -fPIC -O2 -o /opt/unbuf.so /tmp/unbuf.c \
+ && gcc -shared -fPIC -O2 -o /opt/heaplog.so /tmp/heaplog.c \
+ && rm /tmp/unbuf.c /tmp/heaplog.c
 
 WORKDIR /tmp
-COPY tracer.py run.sh /opt/
+COPY tracer.py heap.py values.py run.sh /opt/
 USER runner
 ENTRYPOINT ["/bin/bash", "/opt/run.sh"]

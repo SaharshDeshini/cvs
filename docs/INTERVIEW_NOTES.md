@@ -218,3 +218,19 @@ Live output relies on stdio buffering we can control (`sync_with_stdio(false)` s
 address + value, not arrows. One machine (Windows 11 + Docker Desktop). Library callbacks (e.g. `std::sort`
 comparators) are not stepped into. Valgrind route researched, not prototyped. Public deployment unsafe by design
 until the security phase.
+
+## Phases 5-9: how the diagrams are made (one-minute version)
+- **Problem:** GDB gives you values, not memory structure. To draw arrows you need to know what a pointer points *at*.
+- **Approach:** read every value into a typed tree from the stopped program (arrays, structs, pointers, STL through
+  GDB's own pretty-printers) and keep each box's address; an arrow exists only if a pointer's address lies inside a box
+  we actually read. Nothing is inferred except loop-variable markers, which are labelled as name-based.
+- **Heap:** GDB can't see allocation sizes or frees, so a tiny `LD_PRELOAD` shim logs `malloc`/`free`; the tracer
+  replays the log. That gives `new int[5]` as 5 cells, freed blocks (dangling pointers), and leaks (a block you could
+  see that nothing reaches any more).
+- **Shapes from data, not names:** one self-pointer field = list, two = tree, two that are each other's inverse =
+  doubly linked list. Reversing a list mid-way shows as two lists, which is exactly what it is.
+- **Trust boundary:** the trace comes from the sandbox, so the backend re-validates every field and bounds the
+  work. A test found my cap leaked (≈ 64× over budget); an independent security review found the heap table was
+  unbounded; both fixed with tests that fail without the fix.
+- **Honest limits:** 64-cell window, 150-block heap, ~90 steps/s with a large heap (cache by raw bytes is the next
+  optimisation), no globals, guest can forge its own heap log (only its own diagram).

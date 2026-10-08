@@ -13,17 +13,33 @@ function applyFrames(previous, step) {
   return next;
 }
 
+const NO_HEAP = Object.freeze({});
+
+/** A keyframe's heap is the whole table (none = empty heap); other steps only list blocks that changed or went away. */
+function applyHeap(previous, step) {
+  const delta = step.heap;
+  if (step.keyframe) return delta ? { ...delta.set } : NO_HEAP;
+  if (!delta) return previous;
+  const next = { ...previous };
+  for (const address of delta.del) delete next[address];
+  return Object.assign(next, delta.set);
+}
+
 /**
  * @param {{ steps: object[] }} trace
- * @returns {object[]} one entry per step: { n, line, fn, event, depth, stdoutLen, skipped, returned, changes, frames }
- *   where `frames` is the complete stack (outermost first). Input is not mutated.
+ * @returns {object[]} one entry per step: { n, line, fn, event, depth, stdoutLen, skipped, returned, changes, frames, heap }
+ *   where `frames` is the complete stack (outermost first) and `heap` the complete heap table (block address -> block).
+ *   Input is not mutated.
  */
 export function reconstruct(trace) {
   const views = [];
   let frames = [];
+  let heap = NO_HEAP;
   for (const step of trace.steps) {
     frames = step.keyframe ? step.frames.slice() : applyFrames(frames, step);
+    heap = applyHeap(heap, step);
     views.push({
+      heap,
       n: step.n,
       line: step.line,
       fn: step.fn,
