@@ -1,4 +1,4 @@
-# SCV tracer: drives GDB's Python API and writes one JSON record per executed source line, plus one for every
+# CVis tracer: drives GDB's Python API and writes one JSON record per executed source line, plus one for every
 # function return that lands in user code (so one-line functions and recursion unwind step by step, D-025).
 # Run inside the runner container: gdb -nx -batch -x tracer.py
 # env: SRC (user source path), BIN (binary), OUT_DIR, MAX_STEPS, MAX_INSN_PER_LINE, LINE_SECONDS
@@ -9,6 +9,7 @@
 #   {"t":"end","status":"exited|crashed|killed|step_limit|line_timeout|tracer_error","exitCode":0,"signal":null,"line":9}
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -34,6 +35,9 @@ COMPLETED = {}   # frame_key -> set of lines that frame has finished executing
 MAX_FRAMES = 64
 MAX_FINISH = 50
 MAX_TEXT = 300
+# Locals the compiler invents for `for (x : range)` (GCC 12+: __for_range; older: __range1). They are not the user's
+# variables, hold garbage before the loop starts, and would draw pointer arrows the user never wrote.
+COMPILER_TEMPORARY = re.compile(r"^__(for_)?(range|begin|end)\d*$")
 
 STDOUT_PATH = os.path.join(OUT_DIR, "stdout.txt")
 STDERR_PATH = os.path.join(OUT_DIR, "stderr.txt")
@@ -116,7 +120,7 @@ def read_vars(frame, key):
         return values
     while block is not None and not block.is_global and not block.is_static:
         for sym in block:
-            if not (sym.is_variable or sym.is_argument) or sym.name in values:
+            if not (sym.is_variable or sym.is_argument) or sym.name in values or COMPILER_TEMPORARY.match(sym.name):
                 continue
             if is_alive(sym, current_line, completed):
                 values[sym.name] = read_symbol(sym, frame)

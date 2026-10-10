@@ -79,6 +79,14 @@ test("loop: final value is correct and the loop variable goes out of scope", asy
   assert.equal(lastFrameVars(body).i, undefined);
 });
 
+test("range-based for: the compiler's hidden range/begin/end temporaries are not shown as variables", async () => {
+  const { body } = await traceFixture("rangefor");
+  assert.equal(body.status, "ok");
+  const names = allVarNames(body);
+  assert.deepEqual([...names].filter((name) => name.startsWith("__")), [], "compiler temporaries leaked");
+  assert.ok(names.has("x") && names.has("y") && names.has("v") && names.has("a"), "the user's own variables stay");
+});
+
 test("recursion: depth reaches main + 4 frames with call and return events", async () => {
   const { body } = await traceFixture("recursion");
   assert.equal(body.status, "ok");

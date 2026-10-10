@@ -13,6 +13,7 @@
 # "at"/"size" (own address / byte size) are kept only on entries some pointer in the same snapshot points into.
 import bisect
 import itertools
+import os
 import re
 import struct
 
@@ -25,6 +26,17 @@ MAX_DEPTH = 6
 MAX_NODES = 2500
 MAX_BLOCKS = 150
 MAX_STRING = 60
+# Heap-block cache (the 200-node heap traced at ~90 steps/s because every block was re-read field by field through GDB).
+# A block is copied from the cache only when it is the same allocation, the same type and byte-for-byte the same memory,
+# and its entry is a pure function of those bytes. CVIS_HEAP_CACHE=0 turns it off (tests compare both ways).
+HEAP_CACHE = os.environ.get("CVIS_HEAP_CACHE", "1") != "0"
+MAX_CACHED_BLOCKS = 512
+MAX_CACHED_BYTES = 4096   # a big block is not cached: comparing it every step would cost more than it saves
+MAX_CACHED_NODES = 400   # a template this big costs more to clone than a fresh read saves
+# An allow-list, not a deny-list: only entry kinds read from the block's own bytes. A printer can also produce a plain
+# `struct` or `raw` entry (a list iterator prints the element it points at), so `Reader.outside_reads` additionally counts
+# every read that went beyond the block, and a block with any such read is never cached.
+CACHEABLE_KINDS = frozenset(("int", "char", "bool", "float", "enum", "ptr", "array", "struct"))
 MAX_BLOCK_ELEMENTS = 1 << 20   # array length assumed for a heap block (a forged block size must not build a huge gdb type)
 MAX_COUNTED = 5000   # how far past the shown window a container without a printed size is counted
 LENGTH_IN_SUMMARY = re.compile(r"(?:length|with)\s+(\d+)")
@@ -79,10 +91,52 @@ def block_value(start, target_type, count):
     return pointer.cast(target_type.array(count - 1).pointer()).dereference()
 
 
+def self_contained(node):
+    """True when an entry depends on nothing but the bytes it was read from. A printer-backed container, a C string
+    (`text`) and a reference all read memory somewhere else, so a copy of them could show stale contents."""
+    if isinstance(node, dict):
+        if ("kind" in node and node["kind"] not in CACHEABLE_KINDS) or "text" in node or node.get("ref"):
+            return False
+        return all(self_contained(value) for value in node.values())
+    if isinstance(node, list):
+        return all(self_contained(value) for value in node)
+    return True
+
+
+def clone_entry(node, keep, copies):
+    """copy.deepcopy for entries, which are only dicts, lists and scalars: several times faster. The copy of every dict
+    whose id is in `keep` is recorded in `copies` (original id -> copy), so a caller can find the ones it must track."""
+    if isinstance(node, dict):
+        duplicate = {key: clone_entry(value, keep, copies) if isinstance(value, (dict, list)) else value for key, value in node.items()}
+        if id(node) in keep:
+            copies[id(node)] = duplicate
+        return duplicate
+    return [clone_entry(value, keep, copies) if isinstance(value, (dict, list)) else value for value in node]
+
+
+class CachedBlock:
+    """What one heap block looked like the last time it was read, with what is needed to replay its side effects."""
+    __slots__ = ("block", "target_type", "type_text", "raw", "template", "addressed", "follows", "nodes", "tracked")
+
+    def __init__(self, block, target_type, type_text, raw, template, addressed, follows, nodes):
+        self.block, self.target_type, self.type_text, self.raw, self.template = block, target_type, type_text, raw, template
+        self.addressed, self.follows, self.nodes = addressed, follows, nodes
+        # ids of the template's own dicts that replay must find again in its copy
+        self.tracked = {id(e) for e in addressed} | {id(e) for e, _, _, _ in follows}
+
+    def matches(self, block, target_type, type_text, raw):
+        """Same allocation, the same gdb type (the name alone can collide: anonymous or same-named local structs) and
+        byte-identical memory."""
+        return block is self.block and target_type == self.target_type and type_text == self.type_text and raw == self.raw
+
+
 class Reader:
     def __init__(self, heap):
         self.heap = heap
         self.exposed = {}   # block start -> pointee gdb.Type: blocks the user has seen, so a leak can still be drawn
+        self.block_cache = {}   # block start -> CachedBlock
+        self.follow_log = None   # while a block is read for the cache: every pointer followed, in order
+        self.outside_reads = 0   # reads that went beyond the block's own bytes (printer, char-like pointee, reference)
         self.begin()
 
     def begin(self):
@@ -123,6 +177,7 @@ class Reader:
         elif code in STRUCT_CODES:
             self._fill_struct(value, stripped, entry, depth)
         else:
+            self.outside_reads += 1   # an unknown type: GDB's own text for it, not something we can vouch for
             entry.update(kind="raw", value=str(value)[:MAX_TEXT])
 
     def _note_address(self, value, stripped, entry):
@@ -147,9 +202,17 @@ class Reader:
             return
         if target.code == gdb.TYPE_CODE_INT and target.sizeof == 1:
             entry["text"] = self._c_string(value)
+        if self._prints_pointee(target):
+            self.outside_reads += 1   # GDB puts the pointed-at string into `value` for every character type
         self._follow(entry, addr, target_type, target)
 
+    @staticmethod
+    def _prints_pointee(target):
+        """True for char, signed/unsigned char, wchar_t, char16_t, char32_t: GDB appends the text they point at."""
+        return target.code == gdb.TYPE_CODE_CHAR or (target.code == gdb.TYPE_CODE_INT and (target.sizeof == 1 or "char" in str(target)))
+
     def _fill_reference(self, value, entry):
+        self.outside_reads += 1   # a reference's text is the referent's, which lives elsewhere
         target = value.referenced_value()
         addr = int(target.address)
         entry.update(kind="ptr", ref=True, addr=hex(addr), value=str(target)[:MAX_TEXT], to=type_name(target.type), state=None)
@@ -157,6 +220,8 @@ class Reader:
 
     def _follow(self, entry, addr, target_type, target):
         """Record where a pointer points; if that is a heap block, queue it so the heap table can show it."""
+        if self.follow_log is not None:
+            self.follow_log.append((entry, addr, target_type, target))
         self.targets.append(addr)
         block = self.heap.find(addr)
         if block is None:
@@ -225,6 +290,7 @@ class Reader:
 
     # ── pretty-printed values (STL) ──────────────────────────────────────────────────────────────────────────────
     def _fill_printed(self, value, printer, entry, depth):
+        self.outside_reads += 1   # a pretty-printer may read anything (an iterator shows its element, a string its buffer)
         hint = printer.display_hint() if hasattr(printer, "display_hint") else None
         summary = self._text_of(printer.to_string()) if hasattr(printer, "to_string") else ""
         if hint == "string" or not hasattr(printer, "children"):
@@ -325,17 +391,90 @@ class Reader:
         info = {"kind": "block", "size": block.size, "live": block.live, "ty": type_name(target_type)}
         if not block.live:
             self.exposed.pop(block.start, None)
+            self.block_cache.pop(block.start, None)
             return info
         self.exposed[block.start] = (target_type, block)  # the Block object itself: a reused address is a different block
         try:
             count = min(max(1, block.size // target_type.strip_typedefs().sizeof), MAX_BLOCK_ELEMENTS)
-            entry = self.read(block_value(block.start, target_type, count))
+            entry = self._read_block_value(block, target_type, count)
         except Exception as err:  # noqa: BLE001 - forged sizes / unreadable memory: show the block as unavailable
             entry = {"kind": "unavailable", "type": info["ty"], "value": str(err)[:MAX_TEXT]}
         entry.pop("_at", None)
         entry.pop("_size", None)
         info["v"] = entry
         return info
+
+    def _read_block_value(self, block, target_type, count):
+        """The block's contents as an entry: copied from the cache when the allocation, type and raw bytes are unchanged
+        (one memory read instead of one GDB call per field), read through GDB otherwise."""
+        if not HEAP_CACHE:
+            return self.read(block_value(block.start, target_type, count))
+        type_text = type_name(target_type)
+        raw = self._raw_bytes(block, target_type, count)
+        cached = self.block_cache.get(block.start)
+        hit = raw is not None and cached is not None and cached.matches(block, target_type, type_text, raw)
+        if hit and self.nodes + cached.nodes <= MAX_NODES:
+            try:
+                return self._replay(cached)
+            except Exception:  # noqa: BLE001 - a broken cache entry may cost speed, never the block: read it afresh
+                self.block_cache.pop(block.start, None)
+        return self._read_and_remember(block, target_type, count, type_text, raw)
+
+    @staticmethod
+    def _raw_bytes(block, target_type, count):
+        extent = count * target_type.strip_typedefs().sizeof
+        if extent > MAX_CACHED_BYTES:
+            return None
+        try:
+            return bytes(gdb.selected_inferior().read_memory(block.start, extent))
+        except (gdb.error, ValueError, OverflowError):  # gdb.MemoryError is a gdb.error
+            return None
+
+    def _read_and_remember(self, block, target_type, count, type_text, raw):
+        if raw is None:
+            self.block_cache.pop(block.start, None)
+            return self.read(block_value(block.start, target_type, count))
+        addressed_before, nodes_before = len(self.addressed), self.nodes
+        outside_before, outer_truncated = self.outside_reads, self.truncated
+        self.truncated, self.follow_log = False, []
+        try:
+            entry = self.read(block_value(block.start, target_type, count))
+        finally:
+            clipped = self.truncated
+            self.truncated = outer_truncated or clipped
+            follows, self.follow_log = self.follow_log, None
+        used = self.nodes - nodes_before
+        reads_elsewhere = self.outside_reads != outside_before
+        if clipped or reads_elsewhere or used > MAX_CACHED_NODES or not self_contained(entry):
+            self.block_cache.pop(block.start, None)
+            return entry
+        memo = {}
+        keep = {id(e) for e in self.addressed[addressed_before:]} | {id(e) for e, _, _, _ in follows}
+        template = clone_entry(entry, keep, memo)   # taken before the caller strips _at/_size from the live entry
+        self.block_cache.pop(block.start, None)   # re-insert at the end: dict order is the eviction order (oldest first)
+        if len(self.block_cache) >= MAX_CACHED_BLOCKS:
+            del self.block_cache[next(iter(self.block_cache))]
+        self.block_cache[block.start] = CachedBlock(
+            block, target_type, type_text, raw, template,
+            [memo[id(e)] for e in self.addressed[addressed_before:]],
+            [(memo[id(e)], addr, ttype, target) for e, addr, ttype, target in follows],
+            used,
+        )
+        return entry
+
+    def _replay(self, cached):
+        """A fresh copy of the cached entry, with the snapshot bookkeeping a real read would have done. A pointer's
+        state (heap / freed) comes from the live allocation table, so it is recomputed, never copied."""
+        memo = {}
+        entry = clone_entry(cached.template, cached.tracked, memo)
+        self.nodes += cached.nodes
+        self.addressed.extend(memo[id(e)] for e in cached.addressed)
+        for template_entry, addr, target_type, target in cached.follows:
+            pointer = memo[id(template_entry)]
+            pointer["state"] = None
+            pointer.pop("block", None)
+            self._follow(pointer, addr, target_type, target)
+        return entry
 
     def _add_orphans(self, heap):
         """Blocks the user could see before, still allocated, but no pointer reaches them now: leaked."""
@@ -346,6 +485,7 @@ class Reader:
                 continue
             if block is not seen or not block.live:  # freed, or the address now belongs to a different allocation
                 self.exposed.pop(start, None)
+                self.block_cache.pop(start, None)
                 continue
             heap[key] = dict(self._read_block(block, target_type), orphan=True)
 
