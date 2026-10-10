@@ -4,11 +4,11 @@
 C++-only code visualization platform: write code → run → step → visualize. Real execution is the source of
 truth; AI may only explain verified trace data (never invent values, addresses, order).
 
-## Current state (2026-10-08)
+## Current state (2026-10-10)
 Phases 0-9 done: research, spike, backend trace pipeline, frontend shell, call-stack truth, and (built as one slice,
 2026-10-08) the data-structure diagrams: arrays, pointers/arrows, heap blocks (freed/leaked), linked lists, trees, STL.
-Backend 73 unit + 48 integration, frontend 151 unit + 16 smoke + 17 diagram browser checks. Phases 0-9 are committed
-(00cfe48). 2026-10-09 UI pass is UNCOMMITTED (ask before committing): the tracer hides the compiler's range-for temporaries
+Backend 73 unit + 48 integration, frontend 151 unit + 16 smoke + 17 diagram browser checks. All of it is committed (HEAD f2ac026), working tree clean apart from local .claude/ and scratch spike/cases/.
+2026-10-09 UI pass: the tracer hides the compiler's range-for temporaries
 (`__for_range/__for_begin/__for_end`, regex `COMPILER_TEMPORARY` in `tracer.py`), and the diagram is now stack-left / heap-right
 with larger cells and nodes, the pane scrolling as one unit when a tree is wide, and a dotted canvas behind heap structures.
 Heap lifetimes (2026-10-10): `fe/src/lib/heapLifetime.js` looks ahead through the whole trace, so an orphan block reachable
