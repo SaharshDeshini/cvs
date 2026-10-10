@@ -1,4 +1,4 @@
-# Interview Notes — C++ Code Visualization Platform (SCV)
+# Interview Notes — C++ Code Visualization Platform (CVis)
 
 Kept current at the end of every phase. Last updated: 2026-10-07, after **Phase 4**. Numbers marked **measured**
 were produced by running code in this repo (raw tables: `docs/RESEARCH.md`).

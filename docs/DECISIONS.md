@@ -265,3 +265,41 @@ Format: Decision / Reason / Alternatives / Why rejected / Status. Update Status 
 - Known polish gap: stack arrows cross the rows of the call stack on their way down; a routed "bus" along the right
   edge would be cleaner (Phase 12).
 - Status: **accepted**.
+
+## D-031 — Orphan blocks are judged by looking ahead through the whole trace
+- Decision: the tracer's per-step `orphan` flag only says "no pointer it could read reaches this block now". The frontend
+  (`fe/src/lib/heapLifetime.js`) looks ahead: an orphan reachable again at a later step is **in transit** (amber badge),
+  one never reached again is **leaked** (own tray, byte total). A run that ended early (crash, timeout, step cap) never
+  reports a leak, because the program did not get to store or free what it still held.
+- Reason (FACT, replayed through the frontend's own `reconstruct`/`planStructures`): a class-based list showed 4
+  false "unreachable" flags and a class-based tree 3-4 per insert (the new pointer lives in a register after `new` and
+  through each `return`). A per-step flag cannot tell "leaked" from "not stored yet"; the whole trace can.
+- Limit: "in transit" means unreachable now and reachable later, not proven to be a register.
+- Status: **accepted**.
+
+## D-032 — Bug spotlight only reports what the trace shows, and words guesses as guesses
+- Decision: `fe/src/lib/bugs.js` reports leaks (D-031), a pointer that targets freed memory for **two or more
+  consecutive steps**, the crash signal and line, and timeout / step-limit stops. The cause of a crash is wording, not
+  fact: SIGSEGV with a null pointer in the frame says "likely cause", SIGABRT says "often a double free...".
+- Reason (FACT, seen on the lifecycle fixture): `delete head; head = next;` leaves `head` dangling for exactly one step;
+  flagging it warned about the standard teardown loop and would teach users to ignore the warnings.
+- Status: **accepted**.
+
+## D-033 — Heap blocks are cached by raw bytes, only when the entry is a pure function of them
+- Decision: `values.py` copies a block's entry from a cache instead of re-reading it field by field through GDB, only if
+  it is the same `Block` object, same gdb type (compared as a type, not just by name) and byte-identical memory
+  (`read_memory`), and the entry is a pure function of those bytes. "Pure" is an **allow-list** of entry kinds plus a
+  taint counter (`Reader.outside_reads`): any pretty-printer, character-type pointer (`char*`, `wchar_t*`...), reference
+  or unknown type bumps it, and a block read with any such read is never cached. On a hit it re-runs `_follow` for every
+  recorded pointer, so `state`/`block` always come from the live allocation table; a failing replay falls back to a
+  fresh read. Blocks over 4 KiB or 400 nodes are not cached; eviction is oldest first. `CVIS_HEAP_CACHE=0` turns it off.
+- Found by review, confirmed by test: the first version denied only some kinds (`seq`/`map`/`string`) and so cached a
+  heap struct holding a `std::list` iterator, whose printed value is the element it points at. With the cache on, the
+  trace kept the old element (step 7 of `cache_hazards.cpp` differed from the uncached run). The earlier "all fixtures
+  identical" result was true but incomplete: no fixture contained that shape. `cache_hazards` is now in the check's set.
+- Reason (FACT, measured in the runner image): 200-node list, 806 steps: 85 -> 141 steps/s end to end (snapshot time
+  6.5 s -> 3.4 s after replacing `copy.deepcopy` with a purpose-built `clone_entry`). Small programs: no change within noise.
+- Verification: `node bk/runner/check_heap_cache.js` runs fixtures cache-off vs cache-on and requires every step record
+  to be identical after renaming addresses (ASLR is on in the container). 11 fixtures identical. `wild_pointers`
+  differs between two UNCACHED runs too (it prints uninitialised stack bytes), so it is excluded.
+- Status: **accepted**.

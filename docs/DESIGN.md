@@ -10,12 +10,12 @@ chrome competes with the content. We want the **execution to be the hero**.
 The program is a specimen under observation. The right pane is an instrument readout, not a dashboard:
 
 - **Warm-dark graphite** surfaces (never pure black), a single hierarchy of three elevations.
-- **Amber** = *where execution is now* (current line, current frame, active step). Amber means "now", nowhere else.
-- **Teal** = *what just changed* (a variable's value flashes teal once when it changes). Teal means "changed".
-- **Coral** = problems (compile errors, crashes). Muted slate for everything inert.
-- Type: a serif wordmark ("SCV") against monospace code and data; the contrast gives the tool a voice without a
+- **Lime** = *where execution is now* (current line, current frame, active step). Lime means "now", nowhere else.
+- **Cyan** = *what just changed* (a variable's value flashes cyan once when it changes). Cyan means "changed"; periwinkle is for pointers and arrows.
+- **Coral** = problems (compile errors, crashes, leaks), orange = warnings. A deep teal-slate base for everything inert.
+- Type: a serif wordmark ("CVis") against monospace code and data; the contrast gives the tool a voice without a
   web font download (system serif + system monospace stacks only; works offline).
-- The call stack grows **upward**: the current frame is on top and raised (amber rule), callers sit below it and
+- The call stack grows **upward**: the current frame is on top and raised (lime rule), callers sit below it and
   recede. Recursion reads as a tower.
 - Motion only explains change: a value flash (opacity/background, 600 ms), frame cards entering with a short
   transform. `prefers-reduced-motion` turns it all off.
@@ -23,9 +23,9 @@ The program is a specimen under observation. The right pane is an instrument rea
 ## Layout
 
 ```
-┌ SCV ─────────────────────────────────────────── status chip ┐
+┌ CVis ────────────────────────────────────────── status chip ┐
 │  C++ editor (CodeMirror 6)   │  stack of frame cards        │
-│  current line = amber band   │  ─────────────────────────   │
+│  current line = lime band   │  ─────────────────────────   │
 │  error lines = coral         │  output / errors             │
 │  ▸ stdin (collapsible)       │                              │
 ├ ▶ Run │ ◀ │ ▶/⏸ │ ▶ │ ⟲ │ ━━━●━━━ scrubber │ step 4/12 │ speed ┤

@@ -16,7 +16,7 @@
 ```bash
 cd bk
 npm install
-npm run shreshu        # nodemon server.js  (script name is a leftover; rename to "dev" in Phase 2)
+npm run dev            # nodemon server.js
 ```
 
 The server listens on `PORT` (default 5000). `bk/.env` is git-ignored and currently empty.
@@ -69,7 +69,7 @@ npm run dev      # http://localhost:5173 — open exactly this (or http://127.0.
 npm test         # 36 unit tests (vitest): trace decoder, playback reducer, status mapping, normaliser
 npm run build    # production bundle in fe/dist (about 211 kB gzipped)
 npm run e2e      # 14 checks in real Chrome with screenshots in fe/e2e/shots (needs: Docker, runner image,
-                 # backend `npm run shreshu` in bk/, `npm run dev` here; Chrome path via CHROME_PATH)
+                 # backend `npm run dev` in bk/, `npm run dev` here; Chrome path via CHROME_PATH)
 ```
 
 Env: `VITE_API_URL` (default `http://localhost:5000`); backend `FRONTEND_ORIGIN` (comma-separated allow-list, default
