@@ -303,3 +303,27 @@ Format: Decision / Reason / Alternatives / Why rejected / Status. Update Status 
   to be identical after renaming addresses (ASLR is on in the container). 11 fixtures identical. `wild_pointers`
   differs between two UNCACHED runs too (it prints uninitialised stack bytes), so it is excluded.
 - Status: **accepted**.
+
+## D-034 — Pointers are tags on the data; ranges and matrices are drawn from names and shape, and labelled as guesses
+- Decision: a stack variable that points into an array or at a list node is shown as a **tag on that cell or node**
+  (`fe/src/lib/pointerTags.js`), built from the arrows already resolved from real addresses, so a tag is a FACT. The
+  arrows from the variable table stay, but at low opacity (hover restores them). Index variables (i, j, lo, hi...) keep
+  their markers under the cell.
+- Ranges (`lib/rangeHints.js`) are an **INFERENCE from names**: a pair such as lo/hi, left/right, l/r, start/end whose
+  values are positions in the array. `lo/hi`, `low/high`, `first/last` are always a **search** (the discarded cells dim,
+  the live range lights, `mid` is ringed); `left/right`, `l/r`, `start/end` are a search only while a `mid` is in scope,
+  otherwise a **sliding window** (lit, nothing dimmed). "A mid is in scope" is decided over the WHOLE trace (a function that
+  declares `mid` anywhere is a search on every step, `App.jsx functionsWithMid`). `m` is not a midpoint name. `end`, or any
+  end equal to the array length, is exclusive.
+  The array shows the range in a chip with a tooltip saying it is guessed from names.
+- Reason (FACT, seen on the binary-search fixture): `mid` is declared inside the loop, so it is out of scope between
+  iterations; deciding the mode from `mid` alone flipped a search into a "window" at the loop end. `k` is not marked as
+  an index when a range pair is present, because there it is the window size (seen in `window.cpp`).
+- Matrices (`lib/matrix.js`): an array/vector whose items are arrays/vectors of plain values is drawn as a grid with row
+  and column numbers. Row/column markers use the same name guess (i,r,row,y / j,c,col,x), and the cell where a marked row
+  crosses a marked column is the active cell.
+- Linked lists: nodes between a `left` and a `right` pointer are highlighted (`chainWindow`). slow/fast are tags only.
+- Limits: the range belongs to the FIRST array of the frame it fits (a frame with two same-sized arrays is ambiguous);
+  only int variables count; heap arrays and `vector` cells get pointer tags but no range; the list window is unit
+  tested but has no browser check.
+- Status: **accepted**.

@@ -7,18 +7,20 @@ truth; AI may only explain verified trace data (never invent values, addresses, 
 ## Current state (2026-10-10)
 Phases 0-9 done: research, spike, backend trace pipeline, frontend shell, call-stack truth, and (built as one slice,
 2026-10-08) the data-structure diagrams: arrays, pointers/arrows, heap blocks (freed/leaked), linked lists, trees, STL.
-Backend 73 unit + 48 integration, frontend 151 unit + 16 smoke + 17 diagram browser checks. All of it is committed (HEAD f2ac026), working tree clean apart from local .claude/ and scratch spike/cases/.
+Backend 73 unit + 48 integration, frontend 190 unit + 16 smoke + 23 diagram browser checks. All of it is committed (HEAD is the commit after 8dcdf2d); working tree clean apart from local .claude/ and scratch spike/cases/.
+The 2026-10-11 pointer-tag / range / matrix work (D-034) and the "Obsidian" redesign (near-black neutral base, gold accent, panes as floating cards on a darker canvas, a floating playback dock,
+refined empty/error states; all in `styles.css` + the editor theme, palette tokens at the top of `:root`).
 2026-10-09 UI pass: the tracer hides the compiler's range-for temporaries
 (`__for_range/__for_begin/__for_end`, regex `COMPILER_TEMPORARY` in `tracer.py`), and the diagram is now stack-left / heap-right
 with larger cells and nodes, the pane scrolling as one unit when a tree is wide, and a dotted canvas behind heap structures.
 Heap lifetimes (2026-10-10): `fe/src/lib/heapLifetime.js` looks ahead through the whole trace, so an orphan block reachable
-again later is "in transit" (lime `transit` badge; after every `new` and every return) and only one never reached again is
+again later is "in transit" (gold `transit` badge; after every `new` and every return) and only one never reached again is
 "leaked" (separate red Leak tray with a byte total). New blocks animate in. Known limit: a `unique_ptr` list is drawn as a
 generic "Linked structure" (the shape detector only sees raw self-pointers).
 Understanding the run (2026-10-10, user-approved items 4,5,6,10,12,13 from the improvement list): `lib/bugs.js` bug spotlight
 (leak, dangling >= 2 steps, crash, timeout), `lib/caption.js` one-line step captions, `lib/inlineValues.js` editor labels,
 `lib/focus.js` + `PointerArrows focus` hover tracing, `Timeline.jsx` depth strip with bug markers, and the tracer's heap-block
-cache (D-033, 85 -> 141 steps/s on a 200-node list). Not built (user did not pick them): gallery, step over/into/out, light theme.
+cache (D-033, 85 -> 141 steps/s on a 200-node list). 2026-10-11 (D-034): pointer tags on cells and nodes, search/window ranges, matrix grids (`lib/rangeHints.js`, `pointerTags.js`, `matrix.js`). Not built (user did not pick them): gallery, step over/into/out, light theme.
 User said approval is not required between phases, but wants each phase tested (fix and retest on failure)
 and documented before moving on, plus an interview-ready write-up (`docs/INTERVIEW_NOTES.md`, keep it current).
 Next: **Phase 10 — step compression**, and the measured gaps listed in `docs/RESEARCH.md` → Phases 5-9 (cache heap blocks
@@ -53,8 +55,8 @@ cd bk/runner && docker build -t cvis-runner:2 .   # runner image; rebuild after 
 cd bk && npm test                    # unit (73), no Docker
 cd bk && npm run test:integration    # 48 tests, real runner, ~100 s; do not run two copies at once (concurrency cap -> 429)
 cd fe && npm install && npm run dev  # frontend :5173 (backend must run on :5000: `cd bk && npm run dev`)
-cd fe && npm test                    # 151 unit (vitest)
-cd fe && npm run e2e:diagrams      # 17 real-Chrome checks: arrays, pointers, lists, trees, STL, leaks, timeline, hover, shortcuts (same prerequisites as e2e)
+cd fe && npm test                    # 190 unit (vitest)
+cd fe && npm run e2e:diagrams      # 23 real-Chrome checks: arrays, pointers, lists, trees, STL, leaks, timeline, hover, shortcuts, ranges, matrices (same prerequisites as e2e)
 node bk/runner/check_heap_cache.js   # heap cache off vs on must give identical step records (needs Docker + image); run after ANY tracer/values.py change
 cd fe && npm run e2e                 # 16 checks in real Chrome (needs backend, dev server, Docker, runner image);
                                      # Vite binds localhost (IPv6) here: APP_URL=http://localhost:5173/ npm run e2e
@@ -193,12 +195,18 @@ Docker Desktop must be started manually for runner work. `node --test` needs a g
   cache admit entries by an allow-list and by tracking every read that leaves the block, never by a list of kinds to refuse.
 - 2026-10-10: a crash cause that names every null pointer in scope is a confident wrong answer ("prev is null" for a segfault
   on `q->value`). Name a variable only when the crashing line uses it; say nothing specific otherwise.
+- 2026-10-11: `mid` is declared INSIDE a binary-search loop, so it is out of scope between iterations: a mode decided from
+  `mid` alone flipped "search" to "window" at the loop end (seen in the screenshot, not the unit tests, which always passed a
+  `mid`). A heuristic that depends on a variable's presence must be tested on the steps where it is absent. Likewise `k` was
+  marked as a position in a sliding window where it is the window size.
+- 2026-10-11: a node -e one-liner with nested quotes "failed" (heredoc warning, no output) but had in fact applied, so the next
+  Edit calls were rejected as "modified since read". After any tool call with unclear output, READ the file before re-editing.
 - Plain Node cannot import the frontend libs (extension-less imports); a 6-line `module.register` resolver hook that retries
   with `.js` does it, and `vite-node` cannot load scripts outside the project root.
 - Browser checks: CodeMirror's `cmView` is not reachable; load a program by selecting all and dispatching a `paste`
   ClipboardEvent with a DataTransfer (typing triggers bracket auto-closing). `fe/e2e/diagrams.mjs` does this.
 
 ## Key decisions
-See `docs/DECISIONS.md` (D-001…D-033; D-031 orphans judged by look-ahead, D-032 bug spotlight wording rules, D-033 heap-block cache; Phase 4 added D-024 step identity, D-025 return = step + return value, D-026
+See `docs/DECISIONS.md` (D-001…D-034; D-034 pointer tags, range and matrix guesses; D-031 orphans judged by look-ahead, D-032 bug spotlight wording rules, D-033 heap-block cache; Phase 4 added D-024 step identity, D-025 return = step + return value, D-026
 unbuffered stdout; Phases 5-9 added D-027 heap allocation log, D-028 typed value tree + heap deltas, D-029 shapes from
 data, D-030 measured arrows). D-002 and D-003 were confirmed by the Phase 1 spike.

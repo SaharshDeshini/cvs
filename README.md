@@ -40,7 +40,13 @@ What exists and works today:
   lights its arrows and rings what they point at; an execution timeline (height = call depth) with click/drag to jump;
   and a **bug spotlight** that pins leaks, dangling pointers, crashes and timeouts to their step with an explanation,
   wording any guess about a cause as a guess (D-032).
-- 73 unit + 48 integration backend tests; 151 frontend unit tests; 16 + 17 real-Chrome checks (the 17 in
+- **Pointers, ranges and matrices (D-034):** every pointer variable is a **tag on the cell or node it points at**
+  (`lp`, `rp`, `slow`, `fast`, `head`) and moves with the code; the arrows from the variable table are quiet backdrop.
+  A binary search dims the discarded half and lights the live range with `mid` ringed; a sliding window is lit; nodes
+  between a `left` and a `right` pointer are lit in a linked list. `int m[3][4]` and `vector<vector<int>>` are drawn as
+  grids with row and column numbers and the active cell highlighted. Ranges and row/column markers are **guessed from
+  variable names** (lo/hi, left/right, i/j...) and say so; the pointer tags are facts from real addresses.
+- 73 unit + 48 integration backend tests; 190 frontend unit tests; 16 + 23 real-Chrome checks (the 23 in
   `fe/e2e/diagrams.mjs` read lists, trees, arrows, STL, leaks, the timeline and hover tracing off the page).
 - Heap blocks are cached by raw bytes in the tracer (D-033): a 200-node list traces at ~140 steps/s instead of ~85, and
   `node bk/runner/check_heap_cache.js` proves the output is identical to the uncached tracer.
@@ -62,10 +68,10 @@ curl -X POST http://localhost:5000/api/trace -H "Content-Type: application/json"
   -d '{"code":"int main(){int a=1; a=a+1; return 0;}"}'
 cd ../bk && npm test && npm run test:integration      # backend: 73 unit, 48 runner-backed
 node runner/check_heap_cache.js                       # heap cache on vs off must give identical traces (needs Docker)
-cd ../fe && npm test                                  # frontend: 151 unit
+cd ../fe && npm test                                  # frontend: 190 unit
 cd ../fe && npm run e2e                               # 16 real-Chrome checks (backend + dev server must be running;
                                                       # if 127.0.0.1:5173 is refused: APP_URL=http://localhost:5173/ npm run e2e)
-cd ../fe && npm run e2e:diagrams                      # 17 real-Chrome checks of the arrays / pointers / lists / trees / STL / leaks / timeline
+cd ../fe && npm run e2e:diagrams                      # 23 real-Chrome checks of the arrays / pointers / lists / trees / STL / leaks / timeline
                                                       # (rebuild the runner image first after any change under bk/runner)
 ```
 
