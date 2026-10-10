@@ -121,6 +121,108 @@ await check("a narrow window keeps every arrow and lets a wide structure scroll 
   await page.setViewport({ width: 1440, height: 1000 });
 });
 
+await check("a pointer still in a register is 'in transit', not a leak (build() has just returned its list)", async () => {
+  await load("lifecycle", 19);
+  assert.equal(await count(".badge-transit"), 1);
+  assert.equal(await count(".badge-leaked"), 0);
+  assert.equal(await count(".leak-tray"), 0);
+  await shot("lifecycle-transit");
+});
+
+await check("memory that really leaks is collected in its own tray with a byte count, and the live heap stays separate", async () => {
+  await load("lifecycle", 40);
+  assert.equal(await count(".leak-tray"), 1);
+  assert.equal(await count(".leak-tray .badge-leaked"), 1);
+  assert.equal(await count(".badge-transit"), 0);
+  const [meta] = await texts(".leak-meta");
+  assert.match(meta, /2 blocks · 32 bytes never freed/);
+  assert.equal(await count(".heap-structures > .structure:not(.is-leaked)"), 1, "the freed node the dangling pointer still names stays in the live heap");
+  await shot("lifecycle-leak");
+});
+
+await check("findings: the leak and the dangling pointer are listed, the delete-then-reassign idiom is not", async () => {
+  await load("lifecycle", 40);
+  const findings = await texts(".finding");
+  assert.equal(findings.length, 2, findings.join(" | "));
+  assert.match(findings[0], /^Leak: 2 blocks/);
+  assert.match(findings[1], /^Dangling pointer: list/);
+  assert.equal(await count(".tl-bug"), 2);
+  assert.match((await texts(".caption"))[0], /^Step 41/);
+});
+
+await check("timeline: clicking a problem marker jumps to that step and shows its explanation", async () => {
+  await load("lifecycle", 0);
+  await page.click(".tl-bug.is-bad");
+  const [readout] = await texts(".step-count");
+  assert.match(readout, /^25 \/ 41/);
+  assert.equal(await count(".bug-card.is-bad"), 1);
+  assert.match((await texts(".bug-detail"))[0], /32 bytes/);
+  await shot("timeline-leak");
+});
+
+await check("inline values: the line about to run shows the variables it uses, and only those", async () => {
+  await load("rangefor", 4);
+  assert.deepEqual(await texts(".cm-inline-values"), ["sum = 0   x = 4"]);
+});
+
+await check("hover tracing: pointing at a pointer lights its arrow and rings its target; leaving restores everything", async () => {
+  await load("list", 30);
+  await page.hover(".stack .frame-card.is-current .ptr");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.ok((await count("svg.arrows g.is-focus")) >= 1, "the hovered pointer's arrow is lit");
+  assert.ok((await count("svg.arrows g.is-dim")) >= 1, "the other arrows fade");
+  assert.ok((await count("svg.arrows .focus-ring")) >= 1, "the target is ringed");
+  await shot("hover-trace");
+  await page.mouse.move(5, 5);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(await count("svg.arrows g.is-focus"), 0);
+  assert.equal(await count("svg.arrows g.is-dim"), 0);
+});
+
+const readout = async () => (await texts(".step-count"))[0];
+const waitReadout = (pattern) => page.waitForFunction((source) => new RegExp(source).test(document.querySelector(".step-count")?.textContent ?? ""), { timeout: 90000 }, pattern.source);
+const chord = async (...keys) => { for (const key of keys) await page.keyboard.down(key); for (const key of keys.reverse()) await page.keyboard.up(key); };
+
+await check("Ctrl+Enter runs the program from the editor and from the stdin box (a re-run starts back at step 1)", async () => {
+  await load("lifecycle", 3);
+  assert.match(await readout(), /^4 \/ 41/);
+  await page.click(".cm-content");
+  await chord("Control", "Enter");
+  await waitReadout(/^1 \/ 41/);
+  for (let i = 0; i < 3; i += 1) await page.click("button[aria-label='Next step']");
+  assert.match(await readout(), /^4 \/ 41/);
+  await page.click(".stdin summary");
+  await page.click(".stdin textarea");
+  await chord("Control", "Enter");
+  await waitReadout(/^1 \/ 41/);
+});
+
+await check("keys: End, PageDown/PageUp, and [ ] jump between steps and problems; none of them act while typing", async () => {
+  await load("lifecycle", 0);
+  await page.keyboard.press("End");
+  assert.match(await readout(), /^41 \/ 41/);
+  await page.keyboard.press("PageUp");
+  assert.match(await readout(), /^31 \/ 41/);
+  await page.keyboard.press("Home");
+  await page.keyboard.press("PageDown");
+  assert.match(await readout(), /^11 \/ 41/);
+  await page.keyboard.press("]");
+  assert.match(await readout(), /^25 \/ 41/, "first problem (the leak)");
+  await page.keyboard.press("]");
+  assert.match(await readout(), /^29 \/ 41/, "second problem (the dangling pointer)");
+  await page.keyboard.press("]");
+  assert.match(await readout(), /^29 \/ 41/, "no further problem: stays put");
+  await page.keyboard.press("[");
+  assert.match(await readout(), /^25 \/ 41/);
+  await page.click(".cm-content");
+  await page.keyboard.press("End"); // typing in the editor: End moves the caret, not the playhead
+  assert.match(await readout(), /^25 \/ 41/);
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.click(".shortcuts summary");
+  assert.equal(await count(".shortcut-row"), 10);
+  await shot("shortcuts");
+});
+
 await check("no console errors or page errors across all of it", async () => {
   assert.deepEqual(problems, []);
 });

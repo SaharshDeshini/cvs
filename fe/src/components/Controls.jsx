@@ -1,4 +1,5 @@
 import { SPEEDS } from "../lib/playerReducer";
+import Timeline from "./Timeline";
 
 const ICONS = Object.freeze({
   run: "M8 5v14l11-7z",
@@ -14,7 +15,7 @@ function Icon({ name }) {
 }
 
 /** Bottom control bar: Run | Previous | Play | Next | Reset | scrubber | step counter | speed. */
-export default function Controls({ phase, index, total, playing, speedIndex, line, isStale, dispatch, onRun }) {
+export default function Controls({ phase, index, total, views, bugs, playing, speedIndex, line, isStale, dispatch, onRun }) {
   const canStep = phase === "ready" && total > 0;
   return (
     <footer className="controls" aria-label="Playback controls">
@@ -35,17 +36,20 @@ export default function Controls({ phase, index, total, playing, speedIndex, lin
           <Icon name="reset" />
         </button>
       </div>
-      <input
-        className="scrubber"
-        type="range"
-        min={0}
-        max={Math.max(0, total - 1)}
-        value={index}
-        disabled={!canStep}
-        onChange={(event) => dispatch({ type: "step/seek", index: Number(event.target.value) })}
-        aria-label="Execution step"
-        aria-valuetext={canStep ? `Step ${index + 1} of ${total}` : "No trace"}
-      />
+      <div className="scrub">
+        {canStep && <Timeline views={views} bugs={bugs} index={index} onSeek={(step) => dispatch({ type: "step/seek", index: step })} />}
+        <input
+          className="scrubber"
+          type="range"
+          min={0}
+          max={Math.max(0, total - 1)}
+          value={index}
+          disabled={!canStep}
+          onChange={(event) => dispatch({ type: "step/seek", index: Number(event.target.value) })}
+          aria-label="Execution step"
+          aria-valuetext={canStep ? `Step ${index + 1} of ${total}` : "No trace"}
+        />
+      </div>
       <div className="step-readout">{/* not a live region: at 8x it would announce every step; the scrubber carries aria-valuetext */}
         {canStep ? (
           <>

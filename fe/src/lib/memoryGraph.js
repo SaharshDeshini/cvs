@@ -101,14 +101,31 @@ function leafTexts(view) {
   return texts;
 }
 
-/** Everything the diagram components need for one step, computed once: arrows, heap shapes, and what just changed. */
-export function buildDiagram(view, previous) {
+const NO_VERDICTS = new Map();
+
+/** A structure none of whose blocks anything reaches: "leaked" for good, or "pending" until a later step stores its pointer. */
+function withLifetime(structure, verdicts) {
+  const states = structure.blocks.map((address) => verdicts.get(address));
+  if (states.every((state) => state === "leaked")) return { ...structure, lifetime: "leaked" };
+  if (states.every(Boolean)) return { ...structure, lifetime: "pending" };
+  return structure;
+}
+
+/**
+ * Everything the diagram components need for one step, computed once: arrows, heap shapes, what just changed, and which
+ * heap blocks are new. `verdicts` (see heapLifetime.js) says which orphan blocks are leaked and which are only in transit.
+ */
+export function buildDiagram(view, previous, verdicts = NO_VERDICTS) {
   const changed = changedKeys(previous, view);
   for (const path of view.changes ?? []) { // a whole new frame (a call) is flagged as "f<index>": all its variables are new
     const frameIndex = /^f(\d+)$/.exec(path)?.[1];
     if (frameIndex !== undefined) Object.keys(view.frames[Number(frameIndex)]?.vars ?? {}).forEach((name) => changed.add(stackKey(Number(frameIndex), name)));
   }
-  return { edges: collectEdges(view, buildResolver(view)), plan: planStructures(view), changed };
+  // born = not in the previous table, or a live block over an address that was freed (a recycled address is a new block)
+  const wasLive = (address) => previous?.heap[address]?.live === true;
+  const born = new Set(Object.keys(view.heap).filter((address) => !previous || (view.heap[address].live && !wasLive(address))));
+  const plan = planStructures(view).map((structure) => withLifetime(structure, verdicts));
+  return { edges: collectEdges(view, buildResolver(view)), plan, changed, born };
 }
 
 /** Keys of every value that is new or different compared with `previous` (null = nothing before: all of it is new). */

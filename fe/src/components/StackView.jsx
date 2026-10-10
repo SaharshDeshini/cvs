@@ -1,11 +1,12 @@
+import { memo } from "react";
 import { indexMarkers } from "../lib/arrayMarkers";
 import { stackKey } from "../lib/valueKeys";
-import ValueView from "./ValueView";
+import ValueView, { shortAddress } from "./ValueView";
 
 const COMPOSITE_KINDS = new Set(["array", "struct", "seq", "map"]);
 
 function formatReturned(entry) {
-  if (entry.kind === "ptr") return entry.addr === "0x0" ? "null" : entry.value;
+  if (entry.kind === "ptr") return entry.addr === "0x0" ? "null" : shortAddress(entry.value);
   return entry.value;
 }
 
@@ -57,7 +58,7 @@ function FrameCard({ frame, frameIndex, isCurrent, returned }) {
 }
 
 /** The call stack, innermost frame on top, so recursion reads as a tower. */
-export default function StackView({ view }) {
+function StackView({ view }) {
   const frames = view.frames;
   return (
     <div className="stack" role="region" aria-label="Call stack">
@@ -79,3 +80,5 @@ export default function StackView({ view }) {
     </div>
   );
 }
+
+export default memo(StackView);

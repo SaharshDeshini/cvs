@@ -47,6 +47,20 @@ describe("playerReducer", () => {
     expect(playerReducer(playing, { type: "step/seek", index: -3 }).index).toBe(0);
   });
 
+  it("jump moves by a number of steps, clamps at both ends, and pauses", () => {
+    const playing = { ...ready(30), index: 12, playing: true };
+    expect(playerReducer(playing, { type: "step/jump", delta: 10 })).toMatchObject({ index: 22, playing: false });
+    expect(playerReducer(playing, { type: "step/jump", delta: -10 }).index).toBe(2);
+    expect(playerReducer(playing, { type: "step/jump", delta: 99 }).index).toBe(29);
+    expect(playerReducer(playing, { type: "step/jump", delta: -99 }).index).toBe(0);
+    expect(playerReducer(ready(0), { type: "step/jump", delta: 5 }).index).toBe(0);
+  });
+
+  it("last goes to the final step and pauses", () => {
+    expect(playerReducer({ ...ready(8), playing: true }, { type: "step/last" })).toMatchObject({ index: 7, playing: false });
+    expect(playerReducer(ready(0), { type: "step/last" }).index).toBe(0);
+  });
+
   it("playing stops itself on the last step", () => {
     let state = playerReducer(ready(3), { type: "play/toggle" });
     expect(state.playing).toBe(true);

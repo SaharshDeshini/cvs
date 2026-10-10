@@ -2,10 +2,10 @@ import { createContext, useContext } from "react";
 import { cellKey, fieldKey, mapPartKey } from "../lib/valueKeys";
 
 /** What the diagram knows about this step: which values just changed, and which pointers have an arrow to draw. */
-export const DiagramContext = createContext({ changed: new Set(), sources: new Set() });
+export const DiagramContext = createContext({ changed: new Set(), born: new Set(), sources: new Set() });
 const NO_MARKERS = new Map();
 
-const shortAddress = (address) => (address.length > 8 ? `0x…${address.slice(-4)}` : address);
+export const shortAddress = (address) => (address.length > 8 ? `0x…${address.slice(-4)}` : address);
 const isChanged = (changed, key) => (changed.has(key) ? " is-changed" : "");
 
 function PointerValue({ entry, path }) {

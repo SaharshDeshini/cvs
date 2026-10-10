@@ -6,8 +6,14 @@ import OutputPanel from "./components/OutputPanel";
 import PointerArrows from "./components/PointerArrows";
 import StackView from "./components/StackView";
 import StatusBanner from "./components/StatusBanner";
+import StepNarration from "./components/StepNarration";
 import { DiagramContext } from "./components/ValueView";
 import { requestTrace } from "./lib/api";
+import { detectBugs, findingStep } from "./lib/bugs";
+import { captionFor } from "./lib/caption";
+import { isRelated } from "./lib/focus";
+import { inlineValuesFor } from "./lib/inlineValues";
+import { classifyOrphans } from "./lib/heapLifetime";
 import { buildDiagram } from "./lib/memoryGraph";
 import { initialState, playerReducer, stepDelayMs } from "./lib/playerReducer";
 import { stdoutAt } from "./lib/reconstruct";
@@ -31,16 +37,48 @@ int main() {
 `;
 
 const NO_LINES = [];
+const NO_BUGS = [];
+const PAGE_STEPS = 10; // PageUp / PageDown
 const TEXT_FIELDS = new Set(["TEXTAREA", "INPUT", "SELECT"]);
 const ACTIVATABLE = "button, summary, a, [role='button']"; // Space activates these natively
 const isTypingTarget = (target) => TEXT_FIELDS.has(target.tagName) || Boolean(target.closest?.(".cm-editor, pre[tabindex]"));
+
+const SHORTCUTS = [
+  [["Ctrl", "Enter"], "Run the program"],
+  [["←"], "Previous step"],
+  [["→"], "Next step"],
+  [["Space"], "Play / pause"],
+  [["Home"], "First step"],
+  [["End"], "Last step"],
+  [["PgUp"], `Back ${PAGE_STEPS} steps`],
+  [["PgDn"], `Forward ${PAGE_STEPS} steps`],
+  [["["], "Previous problem"],
+  [["]"], "Next problem"],
+];
+
+/** The shortcut list. Ctrl+Enter works everywhere; the other keys pause while you type in the editor or stdin box (Alt+← → still step). */
+function ShortcutHelp() {
+  return (
+    <details className="shortcuts">
+      <summary>Shortcuts</summary>
+      <dl className="shortcut-list">
+        {SHORTCUTS.map(([keys, label]) => (
+          <div key={label} className="shortcut-row">
+            <dt>{keys.map((key, index) => <span key={key}>{index > 0 && " + "}<kbd>{key}</kbd></span>)}</dt>
+            <dd>{label}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
+}
 
 function EmptyState() {
   return (
     <div className="empty">
       <p className="empty-title">Run your code to watch it execute.</p>
       <p className="empty-body">Every step is recorded from a real run under a debugger — nothing is guessed.</p>
-      <p className="empty-keys"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run · <kbd>←</kbd> <kbd>→</kbd> to step · <kbd>Space</kbd> to play</p>
+      <p className="empty-keys"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run · <kbd>←</kbd> <kbd>→</kbd> to step · <kbd>Space</kbd> to play · <kbd>[</kbd> <kbd>]</kbd> jump between problems</p>
     </div>
   );
 }
@@ -78,25 +116,42 @@ class VisualizationBoundary extends Component {
   }
 }
 
+/** The nearest box under the mouse that has an arrow to or from it (a number hovered inside a node counts as the node). */
+function focusFor(target, edges) {
+  for (let element = target.closest?.("[data-key]"); element; element = element.parentElement?.closest("[data-key]")) {
+    const key = element.getAttribute("data-key");
+    if (edges.some((edge) => isRelated(edge, key))) return key;
+  }
+  return null;
+}
+
 /** The call stack and the heap in one box, with the pointer arrows drawn over both. */
-function Diagram({ view, previous }) {
+function Diagram({ view, previous, verdicts }) {
   const containerRef = useRef(null);
-  const model = useMemo(() => buildDiagram(view, previous), [view, previous]);
-  const context = useMemo(() => ({ changed: model.changed, sources: new Set(model.edges.map((edge) => edge.from)) }), [model]);
+  const [focus, setFocus] = useState(null);
+  const model = useMemo(() => buildDiagram(view, previous, verdicts), [view, previous, verdicts]);
+  const context = useMemo(() => ({ changed: model.changed, born: model.born, sources: new Set(model.edges.map((edge) => edge.from)) }), [model]);
+  const hasHeap = model.plan.length > 0;
   return (
     <DiagramContext.Provider value={context}>
-      <div className="diagram" ref={containerRef}>
+      <div
+        className={`diagram${hasHeap ? " has-heap" : ""}`}
+        ref={containerRef}
+        onMouseOver={(event) => setFocus(focusFor(event.target, model.edges))}
+        onMouseLeave={() => setFocus(null)}
+      >
         <StackView view={view} />
-        {model.plan.length > 0 && <HeapView plan={model.plan} heap={view.heap} />}
-        <PointerArrows containerRef={containerRef} edges={model.edges} changed={model.changed} layoutKey={view.n} />
+        {hasHeap && <HeapView plan={model.plan} heap={view.heap} />}
+        <PointerArrows containerRef={containerRef} edges={model.edges} changed={model.changed} layoutKey={view.n} focus={focus} />
       </div>
     </DiagramContext.Provider>
   );
 }
 
-function Visualization({ state, isStale }) {
+function Visualization({ state, isStale, bugs, lifetimes, onSeek }) {
   const { trace, views, index } = state;
   const view = views[index];
+  const caption = view ? captionFor(view, views[index - 1] ?? null) : "";
   const isLast = views.length === 0 || index >= views.length - 1;
   const hasNothing = trace.status === "ok" && views.length === 0 && !trace.stdout && !trace.stderr;
   return (
@@ -104,7 +159,8 @@ function Visualization({ state, isStale }) {
       <StatusBanner trace={trace} />
       {hasNothing && <div className="banner is-notice" role="status">The program finished without any steps to show.</div>}
       {isStale && <div className="banner is-notice" role="status">The code changed since this run. Press Run to trace the new version.</div>}
-      {view && <Diagram view={view} previous={views[index - 1] ?? null} />}
+      {view && <StepNarration caption={caption} index={index} bugs={bugs} onSeek={onSeek} />}
+      {view && <Diagram view={view} previous={views[index - 1] ?? null} verdicts={lifetimes[index]} />}
       {(view || trace.stdout || trace.stderr) && (
         <OutputPanel
           stdout={stdoutAt(trace, views, index)}
@@ -125,6 +181,7 @@ export default function App() {
   const abortRef = useRef(null);
   const latest = useRef({ code, stdin, phase: state.phase });
   latest.current = { code, stdin, phase: state.phase };
+  const stepContext = useRef({ index: 0, bugs: NO_BUGS }); // what the [ and ] keys need, without re-binding the key listener each step
 
   const handleRun = useCallback(async () => {
     if (latest.current.phase === "loading") return;
@@ -155,6 +212,10 @@ export default function App() {
   useEffect(() => () => abortRef.current?.abort(), []);
 
   useEffect(() => {
+    const jumpToFinding = (direction) => {
+      const target = findingStep(stepContext.current.bugs, stepContext.current.index, direction);
+      if (target !== null) dispatch({ type: "step/seek", index: target });
+    };
     const handleKey = (event) => {
       if (event.defaultPrevented) return; // the editor (or another control) already handled this key
       const typing = isTypingTarget(event.target);
@@ -171,6 +232,10 @@ export default function App() {
         if (event.key === "ArrowRight") dispatch({ type: "step/next" });
         else if (event.key === "ArrowLeft") dispatch({ type: "step/prev" });
         else if (event.key === "Home") dispatch({ type: "step/reset" });
+        else if (event.key === "End") dispatch({ type: "step/last" });
+        else if (event.key === "PageDown") dispatch({ type: "step/jump", delta: PAGE_STEPS });
+        else if (event.key === "PageUp") dispatch({ type: "step/jump", delta: -PAGE_STEPS });
+        else if (event.key === "]" || event.key === "[") jumpToFinding(event.key === "]" ? 1 : -1);
         else if (event.key === " " && !event.repeat && !event.target.closest?.(ACTIVATABLE)) {
           event.preventDefault();
           dispatch({ type: "play/toggle" });
@@ -191,17 +256,36 @@ export default function App() {
     [showErrorLines, state.trace],
   );
 
+  // one look-ahead pass over the whole run per trace; the diagram and the bug finder both read it
+  const runFinished = state.phase === "ready" && state.trace.status === "ok";
+  const lifetimes = useMemo(() => classifyOrphans(state.views, { complete: runFinished }), [state.views, runFinished]);
+  const bugs = useMemo(
+    () => (state.phase === "ready" ? detectBugs(state.views, state.trace, { source: codeAtRun ?? "", lifetimes }) : NO_BUGS),
+    [state.phase, state.views, state.trace, codeAtRun, lifetimes],
+  );
+  stepContext.current = { index: state.index, bugs };
+  const seekStep = useCallback((step) => dispatch({ type: "step/seek", index: step }), []);
+  // the faint "sum = 6   x = 7" label after the line that is about to run, from the run's own source text
+  const inlineText = useMemo(() => {
+    if (currentLine === null || codeAtRun === null) return null;
+    const vars = view.frames.at(-1)?.vars;
+    return (vars && inlineValuesFor(codeAtRun.split("\n")[currentLine - 1] ?? "", vars)) || null;
+  }, [currentLine, codeAtRun, view]);
+
   const chip = chipFor(state.phase, state.trace);
 
   return (
     <div className="app">
       <header className="topbar">
-        <h1 className="wordmark">SCV <span className="wordmark-sub">see what your C++ does</span></h1>
-        <span className={`chip chip-${chip.tone}`} aria-live="polite">{chip.label}</span>
+        <h1 className="wordmark">CVis <span className="wordmark-sub">see what your C++ does</span></h1>
+        <div className="topbar-right">
+          <ShortcutHelp />
+          <span className={`chip chip-${chip.tone}`} aria-live="polite">{chip.label}</span>
+        </div>
       </header>
       <main className="workspace">
         <section className="pane pane-editor" aria-label="Editor">
-          <CodeEditor initialCode={SAMPLE_CODE} onChange={setCode} onRun={handleRun} currentLine={currentLine} errorLines={errorLines} />
+          <CodeEditor initialCode={SAMPLE_CODE} onChange={setCode} onRun={handleRun} currentLine={currentLine} errorLines={errorLines} inlineText={inlineText} />
           <details className="stdin">
             <summary>Program input (stdin)</summary>
             <textarea value={stdin} onChange={(event) => setStdin(event.target.value)} rows={3} spellCheck={false} aria-label="Program input" placeholder="Text the program reads with cin / scanf" />
@@ -213,7 +297,7 @@ export default function App() {
           {state.phase === "failed" && <div className="banner is-problem" role="alert"><strong>Could not run</strong><span className="banner-message"> — {state.error}</span></div>}
           {state.phase === "ready" && (
             <VisualizationBoundary key={state.trace.steps.length + state.trace.status + state.trace.stdout.length}>
-              <Visualization state={state} isStale={isStale} />
+              <Visualization state={state} isStale={isStale} bugs={bugs} lifetimes={lifetimes} onSeek={seekStep} />
             </VisualizationBoundary>
           )}
         </section>
@@ -222,6 +306,8 @@ export default function App() {
         phase={state.phase}
         index={state.index}
         total={state.views.length}
+        views={state.views}
+        bugs={bugs}
         playing={state.playing}
         speedIndex={state.speedIndex}
         line={view?.line}

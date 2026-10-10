@@ -41,6 +41,10 @@ export function playerReducer(state, action) {
       return { ...state, index: clampIndex(state.index - 1, state.views.length), playing: false };
     case "step/seek":
       return { ...state, index: clampIndex(action.index, state.views.length), playing: false };
+    case "step/jump":
+      return { ...state, index: clampIndex(state.index + action.delta, state.views.length), playing: false };
+    case "step/last":
+      return { ...state, index: clampIndex(state.views.length - 1, state.views.length), playing: false };
     case "step/reset":
       return { ...state, index: 0, playing: false };
     case "play/toggle": {

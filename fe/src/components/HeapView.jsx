@@ -1,5 +1,8 @@
+import { createContext, memo, useContext } from "react";
 import { heapKey } from "../lib/valueKeys";
-import ValueView from "./ValueView";
+import ValueView, { DiagramContext } from "./ValueView";
+
+const LifetimeContext = createContext(undefined); // "leaked" | "pending" | undefined, set by the structure a node sits in
 
 const TITLES = {
   list: "Linked list",
@@ -15,7 +18,9 @@ const count = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 function NodeBox({ address, heap }) {
   const block = heap[address];
-  const classes = ["node-box", block.live ? "" : "is-freed", block.orphan ? "is-orphan" : ""].filter(Boolean).join(" ");
+  const lifetime = useContext(LifetimeContext);
+  const { born } = useContext(DiagramContext);
+  const classes = ["node-box", block.live ? "" : "is-freed", lifetime ? `is-${lifetime}` : block.orphan ? "is-orphan" : "", born.has(address) ? "is-new" : ""].filter(Boolean).join(" ");
   return (
     <div className={classes}>
       {block.v
@@ -86,7 +91,8 @@ function Body({ structure, heap }) {
 
 function badges(structure) {
   const found = [];
-  if (structure.orphan) found.push(["unreachable", "no variable points here any more"]);
+  if (structure.lifetime === "leaked") found.push(["leaked", "allocated and never freed, and no variable points here any more"]);
+  else if (structure.lifetime === "pending") found.push(["transit", "the address is still in a register, on its way into a variable"]);
   if (structure.freed) found.push(["freed", "this memory was released with delete / free"]);
   if (structure.cycle) found.push(["cycle", "following the links leads back to a node already visited"]);
   if (structure.shared?.length > 0) found.push(["shared", "some node is reachable from two parents"]);
@@ -95,26 +101,51 @@ function badges(structure) {
 
 function Structure({ structure, heap }) {
   const size = structure.blocks.length;
+  const lifetimeClass = structure.lifetime ? ` is-${structure.lifetime}` : "";
   return (
-    <section className="structure" aria-label={TITLES[structure.kind]}>
+    <section className={`structure${lifetimeClass}`} aria-label={TITLES[structure.kind]}>
       <header className="structure-head">
         <span className="structure-title">{TITLES[structure.kind]}</span>
         <span className="structure-meta">{structure.type ? `${structure.type} · ` : ""}{count(size, "block")}</span>
         {badges(structure).map(([label, hint]) => <span key={label} className={`badge badge-${label}`} title={hint}>{label}</span>)}
       </header>
-      <div className="structure-body"><Body structure={structure} heap={heap} /></div>
+      <LifetimeContext.Provider value={structure.lifetime}>
+        <div className="structure-body"><Body structure={structure} heap={heap} /></div>
+      </LifetimeContext.Provider>
+    </section>
+  );
+}
+
+const bytesIn = (structures, heap) => structures.reduce((total, s) => total + s.blocks.reduce((sum, address) => sum + (heap[address]?.size ?? 0), 0), 0);
+
+/** Memory nothing can reach any more and that was never freed: kept apart, so the live heap stays readable. */
+function LeakTray({ structures, heap }) {
+  const blocks = structures.reduce((total, structure) => total + structure.blocks.length, 0);
+  return (
+    <section className="leak-tray" aria-label="Leaked memory">
+      <h3 className="leak-title">
+        Leaked <span className="leak-meta">{count(blocks, "block")} · {count(bytesIn(structures, heap), "byte")} never freed</span>
+      </h3>
+      <div className="heap-structures">
+        {structures.map((structure) => <Structure key={structure.id} structure={structure} heap={heap} />)}
+      </div>
     </section>
   );
 }
 
 /** Everything allocated with new / malloc that some pointer still reaches (or reached before): the heap. */
-export default function HeapView({ plan, heap }) {
+function HeapView({ plan, heap }) {
+  const leaked = plan.filter((structure) => structure.lifetime === "leaked");
+  const reachable = plan.filter((structure) => structure.lifetime !== "leaked");
   return (
     <div className="heap" role="region" aria-label="Heap">
       <h2 className="panel-title">Heap <span className="panel-meta">{count(Object.keys(heap).length, "block")}</span></h2>
       <div className="heap-structures">
-        {plan.map((structure) => <Structure key={structure.id} structure={structure} heap={heap} />)}
+        {reachable.map((structure) => <Structure key={structure.id} structure={structure} heap={heap} />)}
       </div>
+      {leaked.length > 0 && <LeakTray structures={leaked} heap={heap} />}
     </div>
   );
 }
+
+export default memo(HeapView);

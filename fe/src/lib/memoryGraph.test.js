@@ -242,3 +242,39 @@ describe("changedKeys", () => {
     expect(changedKeys(null, view({ x: int(1) })).has("s0/x")).toBe(true);
   });
 });
+
+describe("buildDiagram: block lifetimes", () => {
+  const orphanList = { "0x1000": { ...listNode(1, "0x1010"), orphan: true }, "0x1010": { ...listNode(2, null), orphan: true } };
+
+  it("tags a structure 'leaked' when every one of its blocks is a leak", () => {
+    const verdicts = new Map([["0x1000", "leaked"], ["0x1010", "leaked"]]);
+    const { plan } = buildDiagram(view({}, orphanList), null, verdicts);
+    expect(plan[0].lifetime).toBe("leaked");
+  });
+
+  it("tags a structure 'pending' when it is orphaned only until a later step stores its pointer", () => {
+    const verdicts = new Map([["0x1000", "pending"], ["0x1010", "pending"]]);
+    const { plan } = buildDiagram(view({}, orphanList), null, verdicts);
+    expect(plan[0].lifetime).toBe("pending");
+  });
+
+  it("leaves a reachable structure untagged, and a half-orphaned one too", () => {
+    const reachable = view({ head: ptr("0x1000", "Node", "0x1000") }, { "0x1000": listNode(1, null) });
+    expect(buildDiagram(reachable, null).plan[0].lifetime).toBeUndefined();
+    const mixed = new Map([["0x1000", "leaked"]]); // 0x1010 has no verdict: something still reaches it
+    expect(buildDiagram(view({}, orphanList), null, mixed).plan[0].lifetime).toBeUndefined();
+  });
+
+  it("lists the blocks that were not in the previous step as born", () => {
+    const before = view({}, { "0x1000": listNode(1, null) });
+    const after = view({}, { "0x1000": listNode(1, "0x1010"), "0x1010": listNode(2, null) });
+    expect([...buildDiagram(after, before).born]).toEqual(["0x1010"]);
+    expect([...buildDiagram(after, null).born].sort()).toEqual(["0x1000", "0x1010"]);
+  });
+
+  it("counts a new allocation at an address that was freed the step before as born (free-list reuse)", () => {
+    const before = view({}, { "0x1000": { kind: "block", size: 16, live: false, ty: "Node" } });
+    const after = view({ n: ptr("0x1000", "Node", "0x1000") }, { "0x1000": listNode(7, null) });
+    expect([...buildDiagram(after, before).born]).toEqual(["0x1000"]);
+  });
+});
