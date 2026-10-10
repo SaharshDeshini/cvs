@@ -20,12 +20,12 @@ const marksField = StateField.define({
 });
 
 const highlightStyle = HighlightStyle.define([
-  { tag: [tags.keyword, tags.controlKeyword, tags.modifier], color: "oklch(78% 0.13 340)" },
-  { tag: [tags.typeName, tags.standard(tags.typeName)], color: "oklch(82% 0.1 215)" },
-  { tag: [tags.number, tags.bool, tags.null], color: "oklch(82% 0.13 60)" },
-  { tag: [tags.string, tags.character], color: "oklch(82% 0.11 165)" },
-  { tag: [tags.comment, tags.lineComment, tags.blockComment], color: "oklch(60% 0.02 200)", fontStyle: "italic" },
-  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "oklch(86% 0.1 90)" },
+  { tag: [tags.keyword, tags.controlKeyword, tags.modifier], color: "oklch(78% 0.12 320)" },
+  { tag: [tags.typeName, tags.standard(tags.typeName)], color: "oklch(80% 0.11 235)" },
+  { tag: [tags.number, tags.bool, tags.null], color: "oklch(78% 0.14 55)" },
+  { tag: [tags.string, tags.character], color: "oklch(82% 0.09 150)" },
+  { tag: [tags.comment, tags.lineComment, tags.blockComment], color: "oklch(55% 0.01 280)", fontStyle: "italic" },
+  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "oklch(88% 0.1 88)" },
   { tag: [tags.processingInstruction, tags.macroName], color: "oklch(74% 0.1 30)" },
 ]);
 
@@ -33,11 +33,11 @@ const editorTheme = EditorView.theme({
   "&": { height: "100%", backgroundColor: "transparent", color: "var(--text)" },
   ".cm-scroller": { fontFamily: "var(--font-mono)", fontSize: "14px", lineHeight: "1.65" },
   ".cm-content": { caretColor: "var(--accent)", padding: "12px 0" },
-  ".cm-gutters": { backgroundColor: "var(--surface)", color: "var(--muted-dim)", border: "none" },
+  ".cm-gutters": { backgroundColor: "var(--bg)", color: "var(--muted-dim)", border: "none" },
   ".cm-lineNumbers .cm-gutterElement": { padding: "0 12px 0 18px", minWidth: "44px" },
   "&.cm-focused": { outline: "none" },
   "&.cm-focused .cm-cursor": { borderLeftColor: "var(--accent)" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "oklch(40% 0.05 200 / 0.55) !important" },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "oklch(38% 0.04 280 / 0.6) !important" },
 });
 
 /** The faint "sum = 6   x = 7" text after the line about to run. Not part of the document: the editor text is untouched. */

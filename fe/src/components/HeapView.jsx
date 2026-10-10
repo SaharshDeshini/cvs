@@ -1,4 +1,5 @@
 import { createContext, memo, useContext } from "react";
+import { chainWindow, tagsAt } from "../lib/pointerTags";
 import { heapKey } from "../lib/valueKeys";
 import ValueView, { DiagramContext } from "./ValueView";
 
@@ -16,13 +17,15 @@ const TITLES = {
 const shortAddress = (address) => `@…${address.slice(-4)}`;
 const count = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
-function NodeBox({ address, heap }) {
+function NodeBox({ address, heap, inWindow = false }) {
   const block = heap[address];
   const lifetime = useContext(LifetimeContext);
-  const { born } = useContext(DiagramContext);
-  const classes = ["node-box", block.live ? "" : "is-freed", lifetime ? `is-${lifetime}` : block.orphan ? "is-orphan" : "", born.has(address) ? "is-new" : ""].filter(Boolean).join(" ");
+  const { born, tags } = useContext(DiagramContext);
+  const names = tagsAt(tags, heapKey(address)); // exact: a pointer into a heap array's cell is tagged on that cell, not on the block
+  const classes = ["node-box", block.live ? "" : "is-freed", lifetime ? `is-${lifetime}` : block.orphan ? "is-orphan" : "", born.has(address) ? "is-new" : "", inWindow ? "in-window" : ""].filter(Boolean).join(" ");
   return (
     <div className={classes}>
+      {names.length > 0 && <span className="node-tag" title="a variable pointing at this node">{names.join(", ")}</span>}
       {block.v
         ? <ValueView entry={block.v} path={heapKey(address)} variant="node" />
         : <span className="node-freed" data-key={heapKey(address)}>{block.live ? "unreadable" : "freed"} · {block.size} bytes</span>}
@@ -33,11 +36,13 @@ function NodeBox({ address, heap }) {
 
 function Chain({ structure, heap }) {
   const arrows = structure.kind === "dlist" ? "⇄" : "→";
+  const { tags } = useContext(DiagramContext);
+  const lit = chainWindow(structure.chain, tags, heapKey); // nodes between a left and a right pointer, when there are such
   return (
     <ol className="chain" aria-label={`${TITLES[structure.kind]}, ${count(structure.chain.length, "node")}`}>
       {structure.chain.map((address, index) => (
         <li key={address} className="chain-item">
-          <NodeBox address={address} heap={heap} />
+          <NodeBox address={address} heap={heap} inWindow={lit.has(address)} />
           {index < structure.chain.length - 1 && <span className="chain-gap" aria-hidden="true" data-glyph={arrows} />}
         </li>
       ))}

@@ -1,7 +1,9 @@
-import { memo } from "react";
+import { memo, useContext } from "react";
 import { indexMarkers } from "../lib/arrayMarkers";
+import { asMatrix, matrixMarks } from "../lib/matrix";
+import { detectRange } from "../lib/rangeHints";
 import { stackKey } from "../lib/valueKeys";
-import ValueView, { shortAddress } from "./ValueView";
+import ValueView, { DiagramContext, shortAddress } from "./ValueView";
 
 const COMPOSITE_KINDS = new Set(["array", "struct", "seq", "map"]);
 
@@ -10,14 +12,24 @@ function formatReturned(entry) {
   return entry.value;
 }
 
-function VariableRow({ name, entry, path, vars }) {
+const isSequence = (entry) => entry.kind === "array" || entry.kind === "seq";
+
+/** The one array/vector of a frame that the range variables (lo/hi, left/right...) are taken to describe: the first they fit. */
+function rangeOwner(vars, searchHint) {
+  return Object.keys(vars).find((name) => isSequence(vars[name]) && !asMatrix(vars[name]) && detectRange(vars, vars[name].len, { searchHint }) !== null);
+}
+
+function VariableRow({ name, entry, path, vars, ownsRange, searchHint }) {
   const isComposite = COMPOSITE_KINDS.has(entry.kind);
-  const markers = entry.kind === "array" ? indexMarkers(vars, entry.len) : undefined;
+  const grid = isSequence(entry) ? asMatrix(entry) : null;
+  const markers = isSequence(entry) && !grid ? indexMarkers(vars, entry.len) : undefined;
+  const range = ownsRange ? detectRange(vars, entry.len, { searchHint }) : null;
+  const matrix = grid ? { grid, marks: matrixMarks(vars, grid.rows, grid.cols) } : null;
   return (
     <li className={`var-row${isComposite ? " is-composite" : ""}`}>
       <span className="var-name">{name}</span>
       <span className="var-type">{entry.type}</span>
-      <div className="var-body"><ValueView entry={entry} path={path} markers={markers} /></div>
+      <div className="var-body"><ValueView entry={entry} path={path} markers={markers} range={range} matrix={matrix} /></div>
     </li>
   );
 }
@@ -37,6 +49,9 @@ function ReturnedNote({ returned }) {
 
 function FrameCard({ frame, frameIndex, isCurrent, returned }) {
   const names = Object.keys(frame.vars);
+  const { searchFns } = useContext(DiagramContext);
+  const searchHint = searchFns.has(frame.fn);
+  const owner = rangeOwner(frame.vars, searchHint);
   return (
     <section className={`frame-card${isCurrent ? " is-current" : ""}`} aria-label={`${frame.fn} frame`}>
       <header className="frame-head">
@@ -49,7 +64,7 @@ function FrameCard({ frame, frameIndex, isCurrent, returned }) {
       ) : (
         <ul className="var-list">
           {names.map((name) => (
-            <VariableRow key={name} name={name} entry={frame.vars[name]} path={stackKey(frameIndex, name)} vars={frame.vars} />
+            <VariableRow key={name} name={name} entry={frame.vars[name]} path={stackKey(frameIndex, name)} vars={frame.vars} ownsRange={name === owner} searchHint={searchHint} />
           ))}
         </ul>
       )}

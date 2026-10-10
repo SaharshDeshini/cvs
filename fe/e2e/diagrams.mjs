@@ -223,6 +223,62 @@ await check("keys: End, PageDown/PageUp, and [ ] jump between steps and problems
   await shot("shortcuts");
 });
 
+await check("binary search: the discarded half is dimmed, the live range is lit and labelled, even between iterations", async () => {
+  await load("binsearch", 9);
+  assert.deepEqual(await texts(".range-chip"), ["search range [4..7]"]);
+  assert.equal(await count(".cell.out-range"), 4);
+  assert.equal(await count(".cell.in-range"), 4);
+  assert.deepEqual(await texts(".cell-marker"), ["lo", "hi"]);
+  await shot("binsearch");
+});
+
+await check("binary search written with left/right stays a search on EVERY step (mid is out of scope between iterations)", async () => {
+  await load("binsearch_lr", 0);
+  const total = Number((await readout()).split("/")[1]);
+  const modes = new Set();
+  for (let step = 0; step < total; step += 1) {
+    const classes = await page.$$eval(".range-chip", (els) => els.map((el) => el.className));
+    for (const name of classes) modes.add(name.includes("is-search") ? "search" : "window");
+    await page.keyboard.press("ArrowRight");
+  }
+  assert.deepEqual([...modes], ["search"], `modes seen: ${[...modes].join(",")}`);
+});
+
+await check("sliding window: the window is lit, and `k` (the window size) is not mistaken for a position", async () => {
+  await load("window", 26);
+  assert.deepEqual(await texts(".range-chip"), ["window [1..4] · 4 cells"]);
+  assert.equal(await count(".cell.in-range"), 4);
+  assert.deepEqual(await texts(".cell-marker"), ["left", "right"]);
+});
+
+await check("two pointers: each pointer variable is a tag on the cell it points at", async () => {
+  await load("twoptr", 12);
+  assert.deepEqual(await texts(".cell-tag"), ["lp", "rp"]);
+  const cell = await rect(".array .cell", 0);
+  const tag = await rect(".cell-tag", 0);
+  assert.ok(Math.abs(tag.x + tag.w / 2 - (cell.x + cell.w / 2)) < 3, "the lp tag is centred under cell 0");
+  await shot("twoptr");
+});
+
+await check("matrix: int[3][4] and vector<vector<int>> are grids with row and column numbers and an active cell", async () => {
+  await load("matrix", 24);
+  assert.equal(await count(".matrix-grid"), 2);
+  assert.deepEqual(await texts(".mx-cell.is-active"), ["8"]);
+  assert.equal(await count(".mx-head.is-marked"), 3);
+  const [header] = await texts(".matrix-grid thead th");
+  assert.equal(header, "0");
+  await shot("matrix");
+});
+
+await check("linked list: the variables standing on a node are tagged on it (head, slow, fast)", async () => {
+  await load("slowfast", 14);
+  assert.deepEqual(await texts(".node-tag"), ["head, slow, fast"]);
+  await load("slowfast", 20);
+  const tags = (await texts(".node-tag")).join(" | ");
+  assert.ok(/slow/.test(tags) && /fast/.test(tags) && /head/.test(tags), tags);
+  await shot("slowfast");
+});
+
 await check("no console errors or page errors across all of it", async () => {
   assert.deepEqual(problems, []);
 });

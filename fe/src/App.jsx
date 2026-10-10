@@ -13,6 +13,8 @@ import { detectBugs, findingStep } from "./lib/bugs";
 import { captionFor } from "./lib/caption";
 import { isRelated } from "./lib/focus";
 import { inlineValuesFor } from "./lib/inlineValues";
+import { pointerTags } from "./lib/pointerTags";
+import { declaresMid } from "./lib/rangeHints";
 import { classifyOrphans } from "./lib/heapLifetime";
 import { buildDiagram } from "./lib/memoryGraph";
 import { initialState, playerReducer, stepDelayMs } from "./lib/playerReducer";
@@ -78,7 +80,12 @@ function EmptyState() {
     <div className="empty">
       <p className="empty-title">Run your code to watch it execute.</p>
       <p className="empty-body">Every step is recorded from a real run under a debugger — nothing is guessed.</p>
-      <p className="empty-keys"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run · <kbd>←</kbd> <kbd>→</kbd> to step · <kbd>Space</kbd> to play · <kbd>[</kbd> <kbd>]</kbd> jump between problems</p>
+      <p className="empty-keys">
+        <span><kbd>Ctrl</kbd> <kbd>Enter</kbd> run</span>
+        <span><kbd>←</kbd> <kbd>→</kbd> step</span>
+        <span><kbd>Space</kbd> play</span>
+        <span><kbd>[</kbd> <kbd>]</kbd> problems</span>
+      </p>
     </div>
   );
 }
@@ -126,11 +133,11 @@ function focusFor(target, edges) {
 }
 
 /** The call stack and the heap in one box, with the pointer arrows drawn over both. */
-function Diagram({ view, previous, verdicts }) {
+function Diagram({ view, previous, verdicts, searchFns }) {
   const containerRef = useRef(null);
   const [focus, setFocus] = useState(null);
   const model = useMemo(() => buildDiagram(view, previous, verdicts), [view, previous, verdicts]);
-  const context = useMemo(() => ({ changed: model.changed, born: model.born, sources: new Set(model.edges.map((edge) => edge.from)) }), [model]);
+  const context = useMemo(() => ({ changed: model.changed, born: model.born, sources: new Set(model.edges.map((edge) => edge.from)), tags: pointerTags(model.edges), searchFns }), [model, searchFns]);
   const hasHeap = model.plan.length > 0;
   return (
     <DiagramContext.Provider value={context}>
@@ -148,9 +155,17 @@ function Diagram({ view, previous, verdicts }) {
   );
 }
 
+/** Names of the functions that declare a midpoint somewhere in the run: their lo/hi style pairs are a binary search on EVERY step. */
+function functionsWithMid(views) {
+  const names = new Set();
+  for (const view of views) for (const frame of view.frames) if (declaresMid(frame.vars)) names.add(frame.fn);
+  return names;
+}
+
 function Visualization({ state, isStale, bugs, lifetimes, onSeek }) {
   const { trace, views, index } = state;
   const view = views[index];
+  const searchFns = useMemo(() => functionsWithMid(views), [views]);
   const caption = view ? captionFor(view, views[index - 1] ?? null) : "";
   const isLast = views.length === 0 || index >= views.length - 1;
   const hasNothing = trace.status === "ok" && views.length === 0 && !trace.stdout && !trace.stderr;
@@ -160,7 +175,7 @@ function Visualization({ state, isStale, bugs, lifetimes, onSeek }) {
       {hasNothing && <div className="banner is-notice" role="status">The program finished without any steps to show.</div>}
       {isStale && <div className="banner is-notice" role="status">The code changed since this run. Press Run to trace the new version.</div>}
       {view && <StepNarration caption={caption} index={index} bugs={bugs} onSeek={onSeek} />}
-      {view && <Diagram view={view} previous={views[index - 1] ?? null} verdicts={lifetimes[index]} />}
+      {view && <Diagram view={view} previous={views[index - 1] ?? null} verdicts={lifetimes[index]} searchFns={searchFns} />}
       {(view || trace.stdout || trace.stderr) && (
         <OutputPanel
           stdout={stdoutAt(trace, views, index)}

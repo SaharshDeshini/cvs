@@ -19,6 +19,15 @@ describe("indexMarkers", () => {
     expect(markers.size).toBe(0);
   });
 
+  it("does not mark `k` when it is the size of a window (k with left/right or lo/hi next to it)", () => {
+    expect(indexMarkers({ k: int(3), left: int(1), right: int(4) }, 8).has(3)).toBe(false);
+    expect(indexMarkers({ k: int(3), left: int(1), right: int(4) }, 8).get(1)).toEqual(["left"]);
+  });
+
+  it("still marks `k` as an index in nested loops (i, j, k)", () => {
+    expect(indexMarkers({ i: int(0), j: int(1), k: int(2) }, 8).get(2)).toEqual(["k"]);
+  });
+
   it("ignores ints whose name does not look like an index", () => {
     expect(indexMarkers({ total: int(2), n: int(3), count: int(1) }, 6).size).toBe(0);
   });

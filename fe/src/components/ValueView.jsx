@@ -1,9 +1,14 @@
 import { createContext, useContext } from "react";
+import { asMatrix } from "../lib/matrix";
+import { tagsFor } from "../lib/pointerTags";
+import { describeRange } from "../lib/rangeHints";
 import { cellKey, fieldKey, mapPartKey } from "../lib/valueKeys";
 
-/** What the diagram knows about this step: which values just changed, and which pointers have an arrow to draw. */
-export const DiagramContext = createContext({ changed: new Set(), born: new Set(), sources: new Set() });
+/** What the diagram knows about this step: which values just changed, which pointers have an arrow to draw, and `tags`:
+ *  box key -> names of the stack variables pointing at it (shown ON the data, see lib/pointerTags). */
+export const DiagramContext = createContext({ changed: new Set(), born: new Set(), sources: new Set(), tags: new Map(), searchFns: new Set() });
 const NO_MARKERS = new Map();
+const NO_MATRIX_MARKS = { rows: new Map(), cols: new Map(), active: new Set() };
 
 export const shortAddress = (address) => (address.length > 8 ? `0x…${address.slice(-4)}` : address);
 const isChanged = (changed, key) => (changed.has(key) ? " is-changed" : "");
@@ -39,23 +44,92 @@ function Member({ item, kind, path }) {
   return <span key={item} className={`cell-text kind-${kind ?? "int"}${isChanged(changed, path)}`}>{item}</span>;
 }
 
-function ArrayView({ entry, path, markers }) {
-  const { changed } = useContext(DiagramContext);
+/** How a cell sits in the live range: inside it, outside it (dimmed in a search), or the middle being probed. */
+function rangeClass(range, index) {
+  if (!range) return "";
+  if (range.empty || index < range.lo || index > range.hi) return " out-range"; // a stale mid outside the range is not lit
+  return range.mode === "search" && index === range.mid ? " in-range is-mid" : " in-range";
+}
+
+function ArrayView({ entry, path, markers, range }) {
+  const { changed, tags } = useContext(DiagramContext);
   const isContainer = entry.kind === "seq";
+  const pointerNames = entry.items.map((_, index) => tagsFor(tags, cellKey(path, index)));
+  const hasMarks = markers.size > 0 || pointerNames.some((names) => names.length > 0);
   return (
     <div className="array" data-key={path} role="group" aria-label={`${isContainer ? entry.container : "array"} of ${entry.len}`}>
       {isContainer && <div className="array-meta">{entry.container} · {entry.len} {entry.len === 1 ? "item" : "items"}</div>}
-      <div className="array-cells">
+      {range && <div className={`range-chip is-${range.mode}`} title="Guessed from the variable names: not something the program states">{describeRange(range)}</div>}
+      <div className={`array-cells${range ? ` range-${range.mode}` : ""}${hasMarks ? " has-marks" : ""}`}>
         {entry.items.map((item, index) => (
-          <div key={index} className={`cell${isChanged(changed, cellKey(path, index))}${markers.has(index) ? " has-marker" : ""}`} data-key={cellKey(path, index)}>
+          <div key={index} className={`cell${isChanged(changed, cellKey(path, index))}${markers.has(index) ? " has-marker" : ""}${rangeClass(range, index)}`} data-key={cellKey(path, index)}>
             <span className="cell-index">{index}</span>
             <Member item={item} kind={entry.elemKind} path={cellKey(path, index)} />
-            {markers.has(index) && <span className="cell-marker">{markers.get(index).join(", ")}</span>}
+            {(markers.has(index) || pointerNames[index].length > 0) && (
+              <span className="cell-marks">
+                {markers.has(index) && <span className="cell-marker">{markers.get(index).join(", ")}</span>}
+                {pointerNames[index].length > 0 && <span className="cell-tag">{pointerNames[index].join(", ")}</span>}
+              </span>
+            )}
           </div>
         ))}
         {entry.more > 0 && <div className="cell cell-more" title={`${entry.len} items in total`}>+{entry.more} more</div>}
         {entry.len === 0 && <div className="cell cell-more">empty</div>}
       </div>
+    </div>
+  );
+}
+
+const joined = (names) => (names ? names.join(", ") : "");
+
+/**
+ * A matrix as a real grid: column numbers across the top, row numbers down the side, the cell where a marked row and a marked
+ * column cross highlighted, and the marked row and column tinted. `marks` is lib/matrix.matrixMarks (a name-based inference).
+ */
+function MatrixView({ entry, path, grid, marks }) {
+  const { changed, tags } = useContext(DiagramContext);
+  const columns = Array.from({ length: grid.cols }, (_, col) => col);
+  const label = `${grid.rows} by ${grid.cols} ${entry.kind === "seq" ? entry.container ?? "vector" : "array"}`;
+  return (
+    <div className="matrix" data-key={path} role="group" aria-label={label}>
+      <div className="array-meta">{label}{grid.jagged ? " (rows differ in length)" : ""}</div>
+      <table className="matrix-grid">
+        <thead>
+          <tr>
+            <td className="mx-corner" />
+            {columns.map((col) => (
+              <th key={col} scope="col" className={`mx-head${marks.cols.has(col) ? " is-marked" : ""}`}>
+                <span className="mx-index">{col}</span>
+                {marks.cols.has(col) && <span className="mx-name">{joined(marks.cols.get(col))}</span>}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {entry.items.map((row, r) => (
+            <tr key={r} data-key={cellKey(path, r)} className={marks.rows.has(r) ? "row-on" : undefined}>
+              <th scope="row" className={`mx-head${marks.rows.has(r) ? " is-marked" : ""}`}>
+                <span className="mx-index">{r}</span>
+                {marks.rows.has(r) && <span className="mx-name">{joined(marks.rows.get(r))}</span>}
+              </th>
+              {columns.map((col) => {
+                const key = cellKey(cellKey(path, r), col);
+                const value = row.items[col];
+                if (value === undefined) return <td key={col} className="mx-cell mx-empty" />;
+                const names = tagsFor(tags, key);
+                const state = `${marks.active.has(`${r},${col}`) ? " is-active" : ""}${marks.cols.has(col) ? " col-on" : ""}${isChanged(changed, key)}`;
+                return (
+                  <td key={col} className={`mx-cell${state}`} data-key={key}>
+                    <span key={value} className="mx-value">{value}</span>
+                    {names.length > 0 && <span className="cell-tag">{names.join(", ")}</span>}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+          {entry.more > 0 && <tr><th scope="row" className="mx-head" /><td className="mx-more" colSpan={grid.cols}>+{entry.more} more rows</td></tr>}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -96,11 +170,14 @@ function MapView({ entry, path }) {
  * One value of any kind. `path` is the box's key (lib/valueKeys); `markers` (arrays only) maps cell index -> loop
  * variable names to show under that cell; `variant="node"` lays a struct out as the compartments of a list/tree node.
  */
-export default function ValueView({ entry, path, markers = NO_MARKERS, variant }) {
+export default function ValueView({ entry, path, markers = NO_MARKERS, variant, range = null, matrix = null }) {
   switch (entry.kind) {
     case "array":
-    case "seq":
-      return <ArrayView entry={entry} path={path} markers={markers} />;
+    case "seq": {
+      const grid = matrix?.grid ?? asMatrix(entry);
+      if (grid) return <MatrixView entry={entry} path={path} grid={grid} marks={matrix?.marks ?? NO_MATRIX_MARKS} />;
+      return <ArrayView entry={entry} path={path} markers={markers} range={range} />;
+    }
     case "struct":
       return <StructView entry={entry} path={path} variant={variant} />;
     case "map":
