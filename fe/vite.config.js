@@ -5,5 +5,6 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react()],
   server: { port: 5173, strictPort: true },
-  test: { environment: "node", include: ["src/**/*.test.js"] },
+  // Node cannot load the Vite entry's `.wasm?url` import, so tests use the package's Node entry instead.
+  test: { environment: "node", include: ["src/**/*.test.js"], alias: { "@wasm-fmt/clang-format/vite": "@wasm-fmt/clang-format/node" } },
 });

@@ -7,7 +7,9 @@ truth; AI may only explain verified trace data (never invent values, addresses, 
 ## Current state (2026-10-10)
 Phases 0-9 done: research, spike, backend trace pipeline, frontend shell, call-stack truth, and (built as one slice,
 2026-10-08) the data-structure diagrams: arrays, pointers/arrows, heap blocks (freed/leaked), linked lists, trees, STL.
-Backend 73 unit + 48 integration, frontend 190 unit + 16 smoke + 23 diagram browser checks. All of it is committed (HEAD is the commit after 8dcdf2d); working tree clean apart from local .claude/ and scratch spike/cases/.
+Backend 73 unit + 48 integration, frontend 209 unit + 16 smoke + 23 diagram + 10 editor browser checks.
+2026-10-12 editor help (D-035): auto-closing brackets, name/keyword suggestions (`lib/cppCompletions.js`), Format button and
+Shift+Alt+F (`lib/formatCpp.js`, clang-format WASM loaded on first click). All of it is committed (HEAD is the editor-help commit after 3c19905); working tree clean apart from local .claude/ and scratch spike/cases/.
 The 2026-10-11 pointer-tag / range / matrix work (D-034) and the "Obsidian" redesign (near-black neutral base, gold accent, panes as floating cards on a darker canvas, a floating playback dock,
 refined empty/error states; all in `styles.css` + the editor theme, palette tokens at the top of `:root`).
 2026-10-09 UI pass: the tracer hides the compiler's range-for temporaries
@@ -55,7 +57,8 @@ cd bk/runner && docker build -t cvis-runner:2 .   # runner image; rebuild after 
 cd bk && npm test                    # unit (73), no Docker
 cd bk && npm run test:integration    # 48 tests, real runner, ~100 s; do not run two copies at once (concurrency cap -> 429)
 cd fe && npm install && npm run dev  # frontend :5173 (backend must run on :5000: `cd bk && npm run dev`)
-cd fe && npm test                    # 190 unit (vitest)
+cd fe && npm run e2e:editor          # 10 real-Chrome checks: bracket closing, suggestions, Format (dev server only, no backend/Docker)
+cd fe && npm test                    # 209 unit (vitest)
 cd fe && npm run e2e:diagrams      # 23 real-Chrome checks: arrays, pointers, lists, trees, STL, leaks, timeline, hover, shortcuts, ranges, matrices (same prerequisites as e2e)
 node bk/runner/check_heap_cache.js   # heap cache off vs on must give identical step records (needs Docker + image); run after ANY tracer/values.py change
 cd fe && npm run e2e                 # 16 checks in real Chrome (needs backend, dev server, Docker, runner image);
@@ -205,8 +208,17 @@ Docker Desktop must be started manually for runner work. `node --test` needs a g
   with `.js` does it, and `vite-node` cannot load scripts outside the project root.
 - Browser checks: CodeMirror's `cmView` is not reachable; load a program by selecting all and dispatching a `paste`
   ClipboardEvent with a DataTransfer (typing triggers bracket auto-closing). `fe/e2e/diagrams.mjs` does this.
+- 2026-10-12: my first "ignores comments and strings" test passed even with the stripping removed (mutation survived): the
+  declaration in the comment had no `;`/`{` before it, so the regex never matched it anyway. Put the hostile text where the
+  pattern WOULD match (`// done; int hidden = 1;`) and break the code on purpose to see the test fail.
+- 2026-10-12: vitest (node) cannot load `@wasm-fmt/clang-format/vite` (`.wasm?url`); `vite.config.js` aliases it to the package's
+  `/node` entry under `test` only. CodeMirror ignores Enter for ~75 ms after a popup opens: a browser check that accepts a
+  suggestion must wait first. A whitespace-only line vanishes under `trimEnd().filter(Boolean)`: assert on raw lines.
+- 2026-10-12: port 5173 "EACCES" on Windows was an old node process already listening (not a reserved port range); `taskkill`
+  said access denied (elevated), so it had to be killed from an admin shell. Check `netstat -ano | grep :5173` first.
 
 ## Key decisions
 See `docs/DECISIONS.md` (D-001…D-034; D-034 pointer tags, range and matrix guesses; D-031 orphans judged by look-ahead, D-032 bug spotlight wording rules, D-033 heap-block cache; Phase 4 added D-024 step identity, D-025 return = step + return value, D-026
 unbuffered stdout; Phases 5-9 added D-027 heap allocation log, D-028 typed value tree + heap deltas, D-029 shapes from
-data, D-030 measured arrows). D-002 and D-003 were confirmed by the Phase 1 spike.
+data, D-030 measured arrows). D-002 and D-003 were confirmed by the Phase 1 spike. D-035 (2026-10-12): editor help, closeBrackets,
+regex name suggestions, clang-format WASM.

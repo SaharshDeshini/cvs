@@ -327,3 +327,18 @@ Format: Decision / Reason / Alternatives / Why rejected / Status. Update Status 
   only int variables count; heap arrays and `vector` cells get pointer tags but no range; the list window is unit
   tested but has no browser check.
 - Status: **accepted**.
+
+## D-035 — Editor help: closeBrackets, a regex name scan for suggestions, clang-format as WebAssembly
+- Decision: `closeBrackets()` from `@codemirror/autocomplete` closes brackets and quotes. Suggestions come from one custom
+  completion source (`fe/src/lib/cppCompletions.js`): C++ keywords, a short list of `std` names, and names the user declared,
+  found by a regex scan of the document with comments, strings and preprocessor lines blanked first. Names the user declared
+  rank above library names; after `std::` only `std` names are offered. **Format** (button and Shift+Alt+F) runs
+  `@wasm-fmt/clang-format` (LLVM style, 4-space indent, 100 columns), loaded with a dynamic `import()` on first use.
+- Why: no backend round trip or Docker for a formatter; real clang-format means the output matches what C++ users expect;
+  the lazy import keeps the 2.5 MB WASM out of the startup bundle (separate asset, 1.1 MB gzipped).
+- Limits (INFERENCE from reading the regexes, not measured on large inputs): the scan is a heuristic, not a parser. It misses
+  `int a, b;` (only `a`), constructors, and `Node n(5);` (read as a function). It runs over the whole document on each
+  keystroke. Format replaces the whole document (undo restores it in one step) and keeps the caret on the same line.
+- Tests: 13 unit (symbol scan, option building; mutation-checked), 5 unit (formatter, real WASM through the package's Node
+  entry via a vitest alias), 10 real-Chrome checks in `fe/e2e/editor.mjs`.
+- Status: **accepted**.

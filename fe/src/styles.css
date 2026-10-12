@@ -67,6 +67,10 @@ kbd { font-family: var(--font-mono); font-size: 12px; padding: 1px 6px; border: 
 .pane { min-height: 0; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--line-soft); border-radius: 18px; box-shadow: var(--shadow-card); overflow: hidden; }
 .pane-editor { background: var(--bg); }
 .editor-host { flex: 1; min-height: 0; overflow: hidden; }
+.editor-bar { display: flex; align-items: center; gap: 12px; padding: 7px 14px 7px 20px; border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+.editor-bar-title { flex: 1; color: var(--muted-dim); font-family: var(--font-mono); font-size: 12px; }
+.editor-bar-error { color: var(--problem); font-size: 12px; }
+.btn-small { height: 28px; padding: 0 12px; border-radius: 8px; font-size: 12px; }
 .pane-viz { overflow: auto; padding: 22px 26px 30px; gap: 18px; background: linear-gradient(180deg, var(--surface), var(--bg) 70%); }
 
 .cm-exec-line { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }

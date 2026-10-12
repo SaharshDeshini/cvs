@@ -19,6 +19,9 @@ What exists and works today:
   (0.5-8x). The executing line is highlighted, changed values flash, a returning call shows "fact() returned 6" on
   the frame that received it, the output panel fills in as the program prints, and compile errors, crashes, timeouts, stale
   code and a down backend each have a designed state. Shortcuts (also listed under "Shortcuts" in the top bar): Ctrl+Enter run (works while typing), ← → step, Space play, Home/End first/last, PgUp/PgDn ±10 steps, [ / ] previous/next problem.
+  Editor help: brackets and quotes close themselves, names are suggested as you type (C++ keywords, common `std` names, and
+  the functions, variables and types declared in your own code; after `std::` only `std` names), and **Format** (or Shift+Alt+F)
+  reformats the code with clang-format compiled to WebAssembly (4-space indent; downloaded on the first click, ~1 MB gzipped).
   Design rationale: [docs/DESIGN.md](docs/DESIGN.md).
 - `POST /api/code/run`: plain run through a public Judge0 instance (no tracing).
 - 58 unit + 36 integration backend tests (hello, variables, loops, recursion and return values, compile/link errors, segfault, infinite loop,
@@ -73,6 +76,7 @@ cd ../fe && npm run e2e                               # 16 real-Chrome checks (b
                                                       # if 127.0.0.1:5173 is refused: APP_URL=http://localhost:5173/ npm run e2e)
 cd ../fe && npm run e2e:diagrams                      # 23 real-Chrome checks of the arrays / pointers / lists / trees / STL / leaks / timeline
                                                       # (rebuild the runner image first after any change under bk/runner)
+cd ../fe && npm run e2e:editor                        # 10 real-Chrome checks of bracket closing, suggestions, Format (dev server only)
 ```
 
 **Security:** this executes arbitrary C++. User code runs only inside the runner container, never on the host.
