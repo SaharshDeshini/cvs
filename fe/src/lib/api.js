@@ -2,7 +2,9 @@
 // only transport/validation/runner problems throw, with a message that is safe to show.
 import { normalizeTrace } from "./normalize";
 
-const API_BASE = import.meta.env?.VITE_API_URL ?? "http://localhost:5000";
+// A production build is served by the backend itself, so it calls its own origin (works from any device that can reach it).
+// The Vite dev server is a different origin from the backend, so dev keeps the explicit address.
+export const API_BASE = import.meta.env?.VITE_API_URL ?? (import.meta.env?.PROD ? "" : "http://localhost:5000");
 const REQUEST_TIMEOUT_MS = 75_000; // server wall clock is 60 s
 
 export class ApiError extends Error {}
@@ -33,7 +35,7 @@ export async function requestTrace(request, signal) {
   } catch (error) {
     if (error?.name === "AbortError") throw error;
     if (error?.name === "TimeoutError") throw new ApiError("The server took too long to answer.");
-    throw new ApiError(`Cannot reach the backend at ${API_BASE}. Is it running?`);
+    throw new ApiError(`Cannot reach the backend at ${API_BASE || "this address"}. Is it running?`);
   }
   const body = await response.json().catch(() => null);
   if (!response.ok) {

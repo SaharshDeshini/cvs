@@ -1,0 +1,41 @@
+Breakpoint 1 at 0x114e: file /tmp/main.cpp, line 6.
+
+Breakpoint 1, main () at /tmp/main.cpp:6
+6	    int a = square(2);
+0x00005aac5fa84153	6	    int a = square(2);
+square (n=0) at /tmp/main.cpp:1
+1	int square(int n) {
+0x00005aac5fa8412d	1	int square(int n) {
+0x00005aac5fa8412e	1	int square(int n) {
+0x00005aac5fa84131	1	int square(int n) {
+2	    int result = n * n;
+0x00005aac5fa84137	2	    int result = n * n;
+0x00005aac5fa8413a	2	    int result = n * n;
+3	    return result;
+4	}
+0x00005aac5fa84141	4	}
+0x00005aac5fa84158 in main () at /tmp/main.cpp:6
+6	    int a = square(2);
+7	    int b = square(3);
+0x00005aac5fa84160	7	    int b = square(3);
+square (n=2) at /tmp/main.cpp:1
+1	int square(int n) {
+0x00005aac5fa8412d	1	int square(int n) {
+0x00005aac5fa8412e	1	int square(int n) {
+0x00005aac5fa84131	1	int square(int n) {
+2	    int result = n * n;
+0x00005aac5fa84137	2	    int result = n * n;
+0x00005aac5fa8413a	2	    int result = n * n;
+3	    return result;
+4	}
+0x00005aac5fa84141	4	}
+0x00005aac5fa84165 in main () at /tmp/main.cpp:7
+7	    int b = square(3);
+8	    return a + b - 13;
+0x00005aac5fa8416b	8	    return a + b - 13;
+0x00005aac5fa8416e	8	    return a + b - 13;
+8	    return a + b - 13;
+9	}
+0x00005aac5fa84174	9	}
+0x000070a2573ac1ca in ?? () from /lib/x86_64-linux-gnu/libc.so.6
+[Inferior 1 (process 27) exited normally]

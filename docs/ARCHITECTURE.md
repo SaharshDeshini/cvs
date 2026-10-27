@@ -163,9 +163,40 @@ This is a **draft**; it is frozen as `schema: 1` with JSON Schema validation onc
    forge or flood stdout). Hard 8 MB cap on the stream; parse by explicit lengths; schema-validate every record
    and every field of the end record; never `eval`; the frontend must render stdout/stderr/compiler text as text
    (never `innerHTML`) and treat variable names as data (`__proto__`).
-4. Backend → LLM (later): only validated trace slices.
+4. Backend → LLM (built 2026-10-13, see "AI assistant" below): only text the server built from its own copy of a run; program text is fenced as data; the answer is checked before it is returned.
 
 ## Failure model
 
 Every failure yields a typed `status` with a human message; the UI never shows a stack trace. Compile errors and
 crashes (signal + last line) are *results*, not HTTP 500s.
+
+## AI assistant (D-037..D-041)
+
+```
+browser                                backend (bk/)                                       Google
+ Ask AI drawer ── POST /api/trace ───► traceController ─ runner ─► trace (schema 1)
+   (useAssistant)  ◄── trace + traceId ─ traceStore (LRU: 8 runs, 1 h)  ◄── keeps {code, stdin, trace}
+                ── POST /api/ai/ask ──► aiController ─ validateAskRequest
+                  {traceId, kind, step,   └ aiService ─ rateLimiter ─ answer cache
+                   message, level,            ├ traceDecoder   (delta trace → one view per step)
+                   history, findings}         ├ contextBuilder (source, outcome, run map, timeline, step snapshot)
+                                              ├ prompts        (system rules, level, question)
+                                              ├ geminiProvider ───── generateContent ──────────► Gemini
+                                              └ answerVerifier (citations, quoted values)
+                ◄── {answer, citations, verification, model, cached, truncated} ──
+                ── GET /api/ai/status ─► {enabled, reason, model, message}   (never the key)
+```
+
+- Files: `routes/aiRoutes.js`, `controllers/aiController.js`, `utils/validateAiRequest.js`, `utils/lruCache.js`, and
+  `services/ai/{aiConfig,aiError,aiService,answerVerifier,contextBuilder,geminiProvider,prompts,rateLimiter,runtime,traceDecoder,traceStore}.js`.
+  Frontend: `lib/{aiApi,aiChat,aiText,useAssistant}.js`, `components/{AiPanel,AiMessage}.jsx`.
+- Schema change: `POST /api/trace` adds `traceId` (32 hex characters) when the assistant is enabled. Nothing else in schema 1 changed.
+- `POST /api/ai/ask` request: `kind` is `step` (needs `step`), `error` (explain the run's outcome; defaults to the last step) or `chat`
+  (needs `message`, at most 1,000 characters). `level` is `beginner|standard|expert`. `history` is at most 10 alternating turns of at
+  most 2,000 characters. `findings` is at most 20 of the browser analyzer's `{step, kind, severity, line, title, detail}`; they are hints.
+- Errors (`{error, code}`): 400 BAD_REQUEST, 410 TRACE_NOT_FOUND, 429 RATE_LIMITED (with `Retry-After`) or PROVIDER_RATE_LIMITED,
+  503 AI_DISABLED / KEY_REJECTED / MODEL_NOT_FOUND, 504 TIMEOUT, 422 BLOCKED, 502 PROVIDER_UNAVAILABLE / PROVIDER_ERROR / EMPTY_ANSWER.
+- Trust boundary 4 (see above) is now real: the model only receives text the server built from its own copy of the run; text
+  that came from the user's program is fenced and its fence markers neutralised; the model's answer is checked before it leaves.
+- Cost of one question: one `generateContent` call, a prompt of about 1 to 15 KB (measured: 1.1 KB for a compile error, 3.7 KB for a
+  63-step tree run), and nothing at all for a repeated step/error question.

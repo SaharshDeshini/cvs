@@ -9,7 +9,8 @@
     "test": "vitest run",
     "e2e": "node e2e/smoke.mjs",
     "e2e:diagrams": "node e2e/diagrams.mjs",
-    "e2e:editor": "node e2e/editor.mjs"
+    "e2e:editor": "node e2e/editor.mjs",
+    "e2e:assistant": "node e2e/assistant.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

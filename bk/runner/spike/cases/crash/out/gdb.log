@@ -1,0 +1,12 @@
+Breakpoint 1 at 0x1131: file /tmp/main.cpp, line 2.
+
+Breakpoint 1, main () at /tmp/main.cpp:2
+2	    int* p = nullptr;
+3	    int x = 5;
+4	    *p = x;
+0x000059ece2a24144	4	    *p = x;
+0x000059ece2a24147	4	    *p = x;
+
+Program received signal SIGSEGV, Segmentation fault.
+0x000059ece2a24147 in main () at /tmp/main.cpp:4
+4	    *p = x;

@@ -508,3 +508,33 @@ Mutations that went RED and were reverted (grep'd clean): resolver type preferen
 - Anonymous struct members share the field name "" and so diagram keys.
 - Arrays show the first 64 cells; globals/statics are not shown; `buildResolver` scans all ranges per pointer.
 - Stack arrows cross call-stack rows (D-030 polish gap).
+
+## Assistant (2026-10-13, D-037..D-041)
+
+Labels: MEASURED = observed in this session's runs; FACT = read from a primary source; INFERENCE = reasoned, not verified; RECOMMENDATION = a choice.
+
+- FACT (ai.google.dev, read 2026-10-13 through a page summariser, so re-check the wording before relying on it): the classic
+  `POST /v1beta/models/{model}:generateContent` is documented beside the newer Interactions API, with no deprecation notice found;
+  the key goes in `x-goog-api-key`; the request has `contents`, `systemInstruction` (text only) and `generationConfig`; the
+  response has `candidates[].content.parts`, `finishReason`, `promptFeedback.blockReason` and `usageMetadata`; `gemini-2.5-flash`
+  and `gemini-3.8-flash` are listed with a free tier. The rate-limits page gave no numbers (they are per project, in AI Studio).
+- NOT VERIFIED: no real call has been made (no key). The function-calling wire format could not be confirmed from the docs fetched,
+  which is one reason D-038 avoids it. A bad key is assumed to arrive as HTTP 400 "API key not valid" or as 401/403 (both handled).
+- MEASURED (real Docker runner, real endpoints, fake Gemini): five fixtures (`bst`, `leak`, `compile_error`, `pointers`, `list`) were
+  traced and asked about through `POST /api/trace` then `POST /api/ai/ask`: all HTTP 200, and in every one the answer check removed the
+  out-of-range step reference and listed the planted fake number. Prompt sizes: 3,727 characters for a 63-step tree run, 1,116 for a
+  compile error; the system prompt is 1,640. Reading the real prompts showed the shapes are right (stack, heap with live/FREED,
+  timeline, fenced compiler output).
+- MEASURED (synthetic worst case: 5,000 steps x 8 frames x 20 variables, every frame changing at every step): before the fix a question
+  cost 413-989 ms to build the context plus 746-930 ms for the verifier's fact text, synchronously, which blocks the server's event
+  loop. After computing the run-wide parts once per run and skipping frames carried over unchanged: 306 ms on the first question,
+  0 ms after. A first attempt (a WeakMap of formatted values) made the worst case SLOWER (2,816 ms): it only helps when values are
+  shared, so it was replaced by an identity check on the frame (a decoded frame that did not change is the same object).
+  Real runs share frames, so they are cheaper than this benchmark.
+- MEASURED: a 1,500-step run produced a context under 30,000 characters (a test); the call/return map is capped at 100 lines, the
+  timeline at 40 variables x 30 changes.
+- INFERENCE: the local limits (8 questions a minute, 150 a day, 2 at a time) sit under the free tier; the real limits may differ.
+  The verifier proves a quoted VALUE exists somewhere in the run, not that it belongs to the step named (the UI wording says so).
+- INFERENCE: one call per question is cheaper on a request-counted quota than a 3-call tool loop; not measured against a real quota.
+- RECOMMENDATION: try the first real key with `gemini-2.5-flash`, then compare answers with `gemini-3.8-flash`; judge answers by
+  whether they cite steps and whether the checker finds the values they quote.

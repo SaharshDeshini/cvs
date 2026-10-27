@@ -29,7 +29,12 @@ const check = (name, fn) => fn().then(() => { passed += 1; console.log(`ok  ${na
 async function replaceCode(source) {
   await page.click(".cm-content");
   await page.keyboard.down("Control"); await page.keyboard.press("a"); await page.keyboard.up("Control");
-  await page.keyboard.type(source);
+  // Paste, don't type: typing triggers bracket auto-closing and suggestion popups, which would change the program under test.
+  await page.evaluate((text) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", text);
+    document.querySelector(".cm-content").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  }, source);
 }
 
 await page.goto(URL, { waitUntil: "networkidle0" });

@@ -1,0 +1,8 @@
+{"t": "step", "n": 0, "line": 3, "fn": "main", "depth": 1, "stdoutLen": 0, "event": "step", "frames": [{"fn": "main", "line": 3, "vars": {"sum": {"type": "long", "value": "131439086934608", "kind": "int"}}}]}
+{"t": "step", "n": 1, "line": 4, "fn": "main", "depth": 1, "stdoutLen": 0, "event": "step", "frames": [{"fn": "main", "line": 4, "vars": {"i": {"type": "long", "value": "140730514935976", "kind": "int"}, "sum": {"type": "long", "value": "0", "kind": "int"}}}]}
+{"t": "skip", "line": 4, "reason": "insn_cap"}
+{"t": "step", "n": 2, "line": 5, "fn": "main", "depth": 1, "stdoutLen": 0, "event": "step", "frames": [{"fn": "main", "line": 5, "vars": {"sum": {"type": "long", "value": "4499998500000", "kind": "int"}}}]}
+{"t": "step", "n": 3, "line": 5, "fn": "main", "depth": 1, "stdoutLen": 0, "event": "step", "frames": [{"fn": "main", "line": 5, "vars": {"sum": {"type": "long", "value": "4499998500000", "kind": "int"}}}]}
+{"t": "step", "n": 4, "line": 6, "fn": "main", "depth": 1, "stdoutLen": 14, "event": "step", "frames": [{"fn": "main", "line": 6, "vars": {"sum": {"type": "long", "value": "4499998500000", "kind": "int"}}}]}
+{"t": "step", "n": 5, "line": 7, "fn": "main", "depth": 1, "stdoutLen": 14, "event": "step", "frames": [{"fn": "main", "line": 7, "vars": {"sum": {"type": "long", "value": "4499998500000", "kind": "int"}}}]}
+{"t": "end", "status": "exited", "exitCode": 0, "signal": null, "line": null}

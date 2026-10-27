@@ -117,10 +117,16 @@ specific layouts, and tree shapes with parent pointers (drawn as a general graph
 - Tasks: loop detection, `skipped` events, keyframes, lazy expansion, `truncated` UX.
 - Tests: 10⁷-iteration loop returns <5k steps within the wall limit; nested loops; recursion.
 
-## Phase 11 — AI explanations (optional)
-- Tasks: `/api/explain`; slice builder; grounded prompt; numeric/identifier cross-check; cache.
-- Tests: golden slices; adversarial "invent a value" prompts; insufficient-data path.
-- Acceptance: no unsupported values in output across the test set.
+## Phase 11 — AI explanations (optional) — BUILT 2026-10-13 (D-037..D-041), ahead of Phase 10 by the user's choice
+- Built: `GET /api/ai/status` and `POST /api/ai/ask` (not `/api/explain`); server-held runs addressed by `traceId`; a context builder
+  (not a slice of the trace: the whole run, condensed); a grounded prompt; an answer verifier (citations + quoted values); an answer
+  cache; rate limits; Gemini provider (free tier); the Ask AI drawer with step/error explain, chat, levels and citation chips.
+- Tests: 67 backend + 33 frontend unit tests, 15 real-Chrome checks, the existing 48 integration tests and 49 other browser checks
+  re-run; the real runner traced five fixtures through the real endpoints with a fake Gemini (RESEARCH.md → Assistant).
+- Acceptance as written ("no unsupported values in output") is NOT claimed: the verifier reports a quoted value that is not in the
+  run, it cannot prove an explanation true (D-039). Not done: golden-slice tests against a real model, adversarial prompts against a
+  real model (needs a key), the live Gemini wire format check.
+- Next for the assistant (none built): streaming, predict-the-next-value mode, narrated autoplay, export of an explained trace.
 
 ## Phase 12 — UI polish
 - Tasks: typography, motion, responsive, light theme, sample gallery, accessibility pass.

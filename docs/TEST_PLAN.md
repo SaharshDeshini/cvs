@@ -59,3 +59,20 @@ frontend render time for a 5k-step trace · runner memory per request.
 ## Manual checks per milestone
 
 Run the app, exercise the new feature, read server and container logs, try one adversarial input, screenshot the UI.
+
+## AI assistant (added 2026-10-13)
+
+| Area | Where | What it proves |
+|---|---|---|
+| Cache, config, limiter, trace store | `bk/src/tests/unit/aiFoundation.test.js` (15) | LRU eviction and ttl; no key = off; shared server = off; junk numbers fall back; the public status has no key; the per-minute window slides; the daily cap rolls over; the in-flight cap; release is idempotent; unguessable ids; expiry |
+| Gemini client | `geminiProvider.test.js` (12) | request shape with the key only in the header; thought parts hidden; MAX_TOKENS; 503 retried; 429 not retried; bad key via 403 and 400; blocked / empty / timeout; the key never appears in a message or in the log detail |
+| Trace decoder | `traceDecoder.test.js` (4) | one view per step; parity with `fe/src/lib/reconstruct.js` on two runs; stdout cut on bytes; no mutation |
+| Context, prompts, verifier | `aiContext.test.js` (16) | what the model sees (stack, heap, FREED, call arguments, returns, output so far); program text cannot close a fence; size stays bounded; timeline correctness and ordering; citations numbered from 1; out-of-range ones removed; unmatched values reported. Mutation-checked: the citation bound, the fence neutraliser, live-first ordering |
+| Service | `aiService.test.js` (12) | off / unknown run / bad step refused before any model call; context hand-off; verification; caching rules; history order; limiter use; slot freed on failure |
+| HTTP | `aiHttp.test.js` (8) | real app + stubbed runner + fake Gemini server: status, traceId, ask, 410, 400, rejected key, 429, disabled, Retry-After |
+| Frontend libraries | `aiText.test.js` (10), `aiChat.test.js` (12), `aiApi.test.js` (11) | answer parser (HTML stays text); reducer and history; client error mapping; findings trimmed |
+| Browser | `fe/e2e/assistant.mjs` (15) | panel states, quick actions, request bodies, chips jump the timeline, notes, safe rendering, saved answers, history, keys in the box do not step the program, retry, level, reset on a new run, Alt+A, setup card, no request at page load |
+
+Not covered yet (needs a real key): the live Gemini wire format, answer quality, adversarial prompts against a real model.
+Re-run after changing the assistant: `cd bk && npm test`, `cd fe && npm test`, `cd fe && npm run e2e:assistant`, and EVERY other browser
+script (a change to key handling or the top bar can break them: the shortcut-count check in `diagrams.mjs` did).

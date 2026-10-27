@@ -342,3 +342,105 @@ Format: Decision / Reason / Alternatives / Why rejected / Status. Update Status 
 - Tests: 13 unit (symbol scan, option building; mutation-checked), 5 unit (formatter, real WASM through the package's Node
   entry via a vitest alias), 10 real-Chrome checks in `fe/e2e/editor.mjs`.
 - Status: **accepted**.
+
+## D-036 — "Deploy" for one person is `npm start` on their own machine; Express serves the built frontend
+- Decision: no cloud host. The runner needs Docker with g++ and gdb, which free hosting tiers do not give, and the user wants
+  zero cost. A root `npm start` (`scripts/start.js`) installs missing dependencies, rebuilds `fe/dist` when `fe/` source is
+  newer, builds the runner image if absent, warns if Docker is down, refuses a port that is already in use, and starts
+  `bk/server.js`, which serves `fe/dist` (`bk/src/utils/serveFrontend.js`, registered after the API routes; GET/HEAD only;
+  never answers `/api/*`). One process, one port, same origin, so CORS is not involved. Production builds call their own
+  origin (`fe/src/lib/api.js`); the Vite dev server keeps `http://localhost:5000`.
+- Binding: `127.0.0.1` by default. `--share` binds `0.0.0.0` for the owner's phone or laptop over a private network or
+  Tailscale. There is no login, so `--share` lets anyone who can reach the address run C++ in the container; the script prints
+  that warning. D-010 still holds: never expose it publicly. `server.js` itself now defaults to 127.0.0.1 too (a security review found that a
+  plain `npm run dev` would otherwise expose the unauthenticated run endpoint to the LAN); `HOST=0.0.0.0` opts in. Not done: a Host-header
+  check against DNS rebinding (pre-existing).
+- Port check: connect to `127.0.0.1` and `::1`, not bind. MEASURED on this machine: a bind to 127.0.0.1 succeeded while another
+  process held `0.0.0.0:5056`, so a bind-based probe would have let a second server start beside a stale one.
+- Tests: 6 unit tests (`serveFrontend.test.js`: assets, SPA fallback, API wins, POST 404, path traversal, no build). By hand:
+  `npm start` on a free port built and served the page; the 16-check browser smoke test passed against the production build
+  on that one port; `--share` bound `0.0.0.0`; a second start on a taken port exited 1 with a message.
+- Not done: no auth, no per-IP rate limiting (see Known problems), no autostart at login.
+- Status: **accepted**.
+
+## D-037 — The AI assistant explains a run the SERVER holds; the browser only sends a `traceId`
+- Decision: after `POST /api/trace` the backend keeps the run (`{code, stdin, trace}`) in a bounded LRU
+  (`services/ai/traceStore.js`: 8 runs, 1 hour) and returns an extra `traceId` (128-bit random hex) in the trace JSON, only
+  when the assistant is enabled. `POST /api/ai/ask` takes `{traceId, kind, step, message, level, history, findings}`; the
+  context the model sees is built from the server's copy. The browser can never feed the model a forged run, which keeps the
+  founding rule ("AI may only explain verified trace data") true by construction, not by trust.
+- Cost: a server restart or an evicted run answers `410 TRACE_NOT_FOUND` and the UI asks the user to press Run again.
+  The schema-1 fields are unchanged (`traceId` is additive; `normalizeTrace` spreads unknown fields).
+- The backend decodes the delta trace itself (`services/ai/traceDecoder.js`), a CommonJS twin of `fe/src/lib/reconstruct.js`.
+  A parity test runs both on the same traces (the frontend file has no imports, so Node can load it) so they cannot drift.
+- Provider: Google Gemini, classic `models/{model}:generateContent` (`geminiProvider.js`). The key comes from `GEMINI_API_KEY`
+  (or `GOOGLE_API_KEY`) in `bk/.env`, travels only in the `x-goog-api-key` header, and is never in a URL, a log line, an error
+  message, or `GET /api/ai/status`. Default model `gemini-2.5-flash`; `GEMINI_MODEL` overrides it; `GEMINI_BASE_URL` lets tests
+  point at a fake server.
+- FACT (read from ai.google.dev on 2026-10-13, summarised by the fetch tool, NOT confirmed against a live key): `generateContent`
+  and `streamGenerateContent` are still documented next to the newer Interactions API with no deprecation notice; the request
+  has `contents`, `systemInstruction`, `generationConfig`; the response has `candidates[].content.parts`, `finishReason`,
+  `promptFeedback`, `usageMetadata`; `gemini-2.5-flash` and `gemini-3.8-flash` are listed with a free tier.
+- INFERENCE (unverified): that a bad key arrives as HTTP 400 "API key not valid" (handled like 401/403), and the free-tier
+  numeric limits (the pricing/limits pages gave none; AI Studio shows them per project). Local defaults are therefore
+  conservative and configurable (`AI_RATE_PER_MINUTE`=8, `AI_DAILY_LIMIT`=150, `AI_MAX_CONCURRENT`=2).
+- Not done: no live call has been made yet (no key); every provider path is tested against a fake HTTP server only.
+- Status: **accepted**; re-verify the wire format the first time a real key is used.
+
+## D-038 — One model call per question: a rich retrieved context instead of a tool loop
+- Decision: `contextBuilder.js` assembles, from the server's trace, the numbered source, the run outcome (status, signal,
+  compiler diagnostics, stderr), the analyzer findings, a calls/returns map of the WHOLE run, a per-variable timeline of its
+  changes, and a detailed snapshot of the asked-about step (stack, heap with FREED labels, changed variables including a new
+  call's arguments, return value, output so far) plus its neighbours. Then ONE `generateContent` call.
+- Why not function calling / a tool loop (RECOMMENDATION that I first made to the user): free-tier quotas are counted in
+  requests, so a 3-call question costs three times as much; the function-calling wire format could not be confirmed without a
+  key; and a single call is deterministic and fully testable offline.
+- Caps (every section is bounded; a 1,500-step run produced a context under 30,000 characters in a test): source 16,000
+  chars, 100 call/return lines (head + tail), 40 variables x 30 changes, 12 heap blocks, arrays 16 items, struct depth 3.
+- Prompt-injection: source, program output and compiler text are wrapped in `<<<LABEL ... >>>` fences and the markers are
+  neutralised inside them (a test proves program output cannot close its own fence); the system prompt says fenced text is data.
+- Limit (INFERENCE): a very long run is shown condensed, so the model may answer "the recorded run does not show that".
+- Status: **accepted**.
+
+## D-039 — Every answer is checked against the facts it was given; problems are reported, not hidden
+- Decision: `answerVerifier.js` runs on each answer. (1) Citations: the model must write `[[step:N]]` after a claim; a marker
+  for a step that does not exist is REMOVED and counted. (2) Values: every number or hex address written in backticks must
+  appear in the cited steps, the focus step, or the run-wide facts (source, outcome, stdout, call map, timeline); otherwise it
+  is returned in `verification.unverifiedValues` and the UI says so. Nothing is silently corrected.
+- Limit (INFERENCE, stated in the UI wording): this proves a quoted VALUE exists somewhere in the run, not that it belongs to
+  the step named; arithmetic the model does itself is flagged too (the prompt asks it to say "1 + 2 = 3"). It cannot prove an
+  explanation is right. The product keeps the deterministic one-line caption (`caption.js`) as the always-available baseline.
+- Tested with mutations: moving the citation bound by one and removing the fence neutraliser each made tests fail.
+- Status: **accepted**.
+
+## D-040 — Safety and cost controls for the assistant
+- OFF by default: no key means off. OFF when the server is shared (`HOST` not loopback, i.e. `npm start -- --share`) unless
+  `AI_ALLOW_SHARE=1`, because that mode has no login and anyone on the network could spend the key. `AI_ENABLED=0` forces off.
+  `GET /api/ai/status` returns the reason and a setup message.
+- Limits: sliding window per client IP, a daily cap for the process, and a cap on requests in flight (`rateLimiter.js`); the
+  server answers 429 with `Retry-After`. Explanations of a step/error are cached (200 entries, 1 hour, keyed by run, step,
+  level, findings and prompt version), so repeating them costs nothing. A closed browser tab aborts the model call.
+- Provider failures are typed (`AiError`): key rejected, model not found, provider rate limit (never retried), unavailable
+  (5xx/network, retried twice with backoff), timeout (30 s default), blocked, empty answer.
+- Privacy: the user's code and its run data are sent to Google. The UI says so before the first question.
+- Status: **accepted**.
+
+## D-041 — The assistant is a drawer beside the diagram; steps are numbered like the UI; the backend is asked lazily
+- Decision: `Ask AI` (top bar, `Alt+A`) opens a third pane beside the diagram (an overlay under 1,180 px). Entry points where
+  the user already looks: **Explain with AI** next to the step caption and in the error banner, and the panel's quick actions
+  (Explain step N; one outcome action worded for the result: "Explain the compile error", "Why did it crash?", "Why didn't it
+  finish?", "Explain the problems found", "Summarise this run"). One conversation per run (a new `traceId` clears it: addresses
+  in old answers describe a program that no longer exists). A repeated step/error question shows the answer already on screen.
+- Numbering: the UI says "Step 3" (counted from 1), so the text the model reads and writes is counted from 1 too
+  (`STEP 3 of 7`, `[[step:3]]`). The API boundary is 0-based (`step` in the request, `citations` and `step` in the response).
+  Found before it shipped: a model saying "step 2" beside a chip saying "Step 3" would have confused every user.
+- Safe rendering: answers go through `lib/aiText.js` into React elements (paragraphs, lists, code blocks, bold, inline code,
+  step chips). There is no HTML path; a test puts `<img onerror>` in an answer and checks that no element or script appears.
+  The key link uses `rel="noopener noreferrer"`.
+- Lazy status (found by an existing browser check failing): the first version fetched `/api/ai/status` at page load, which is
+  a failed request, and a console error, whenever the backend is not running (`e2e/editor.mjs` runs without one). The status is
+  now asked only when the panel opens or a run comes back from the backend. A run's `traceId` exists only when the assistant is on.
+- Verification is shown, not hidden (D-039): removed step references and unmatched values appear under the answer in plain words.
+- Not done (deliberately): streaming tokens (the reply appears when complete), saving chats across reloads, predict-the-next-value
+  mode, narrated autoplay, exporting an explained trace, a function-calling loop (D-038).
+- Status: **accepted**.

@@ -1,7 +1,10 @@
+const path = require("node:path");
 const express = require("express");
 const cors = require("cors");
 const codeRoutes = require("./routes/codeRoutes");
 const traceRoutes = require("./routes/traceRoutes");
+const aiRoutes = require("./routes/aiRoutes");
+const { serveFrontend } = require("./utils/serveFrontend");
 
 const JSON_BODY_LIMIT = "512kb"; // code (100 KB) + stdin (10 KB), with JSON escaping headroom
 // Vite's default dev origin, under both loopback spellings. FRONTEND_ORIGIN overrides (comma-separated).
@@ -15,6 +18,10 @@ app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 app.use("/api/code", codeRoutes);
 app.use("/api/trace", traceRoutes);
+app.use("/api/ai", aiRoutes);
+
+// A built frontend (`cd fe && npm run build`) is served from here too: one process, one port, no CORS. Absent in dev.
+serveFrontend(app, process.env.FRONTEND_DIR || path.join(__dirname, "..", "..", "fe", "dist"));
 
 // Body-parser failures (malformed JSON, oversized body, unsupported charset) are client errors, not 500s.
 app.use((err, req, res, next) => {

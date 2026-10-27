@@ -7,9 +7,19 @@ truth; AI may only explain verified trace data (never invent values, addresses, 
 ## Current state (2026-10-10)
 Phases 0-9 done: research, spike, backend trace pipeline, frontend shell, call-stack truth, and (built as one slice,
 2026-10-08) the data-structure diagrams: arrays, pointers/arrows, heap blocks (freed/leaked), linked lists, trees, STL.
-Backend 73 unit + 48 integration, frontend 209 unit + 16 smoke + 23 diagram + 10 editor browser checks.
+Backend 146 unit + 48 integration, frontend 242 unit + 16 smoke + 23 diagram + 10 editor + 15 assistant browser checks (all measured 2026-10-13).
 2026-10-12 editor help (D-035): auto-closing brackets, name/keyword suggestions (`lib/cppCompletions.js`), Format button and
-Shift+Alt+F (`lib/formatCpp.js`, clang-format WASM loaded on first click). All of it is committed (HEAD is the editor-help commit after 3c19905); working tree clean apart from local .claude/ and scratch spike/cases/.
+Shift+Alt+F (`lib/formatCpp.js`, clang-format WASM loaded on first click). Committed in 8b39f7e.
+2026-10-12 "deploy" for one person (D-036): root `npm start` (`scripts/start.js`) builds `fe/dist` and runs the backend, which serves it
+(`bk/src/utils/serveFrontend.js`); `--share` binds 0.0.0.0 for a private network/Tailscale. Uncommitted until the user asks.
+2026-10-13 AI assistant (D-037..D-041, user asked for it with a FREE Google Gemini key to be added to `bk/.env` later; uncommitted):
+the backend keeps each traced run (`services/ai/traceStore.js`, `traceId` added to the `/api/trace` response when the assistant is on),
+`POST /api/ai/ask` + `GET /api/ai/status`, one `generateContent` call per question over a context the SERVER builds (`contextBuilder.js`),
+`answerVerifier.js` removes citations to steps that do not exist and reports quoted values missing from the run, rate limits, answer
+cache, off without a key and off under `--share`. Frontend: Ask AI drawer (`AiPanel`, `AiMessage`, `lib/{aiApi,aiChat,aiText,useAssistant}.js`),
+Alt+A, "Explain with AI" beside the caption and the error banner. **NEVER RUN AGAINST A REAL KEY**: the Gemini wire format is from docs +
+a fake server (D-037); the first real question is the real test; check `finishReason`, thinking models and the free-tier model id first.
+Steps in model-facing text and in the UI are counted from 1; the API (`step`, `citations`) is 0-based.
 The 2026-10-11 pointer-tag / range / matrix work (D-034) and the "Obsidian" redesign (near-black neutral base, gold accent, panes as floating cards on a darker canvas, a floating playback dock,
 refined empty/error states; all in `styles.css` + the editor theme, palette tokens at the top of `:root`).
 2026-10-09 UI pass: the tracer hides the compiler's range-for temporaries
@@ -51,14 +61,17 @@ Frontend (`fe/`: React + Vite + CodeMirror 6, one pure reducer) → Express back
 
 ## Commands
 ```bash
+npm start                            # ROOT: the one-command run (D-036): http://127.0.0.1:5000, builds fe + runner image as needed
+npm start -- --share                 # same, bound to 0.0.0.0 for other devices on a private network/Tailscale (no login!)
 cd bk && npm install
 npm run dev                          # nodemon server.js
 cd bk/runner && docker build -t cvis-runner:2 .   # runner image; rebuild after ANY change to tracer.py/run.sh
-cd bk && npm test                    # unit (73), no Docker
+cd bk && npm test                    # unit (146), no Docker, no key (the AI layer runs against a fake fetch and a fake Gemini server)
 cd bk && npm run test:integration    # 48 tests, real runner, ~100 s; do not run two copies at once (concurrency cap -> 429)
 cd fe && npm install && npm run dev  # frontend :5173 (backend must run on :5000: `cd bk && npm run dev`)
 cd fe && npm run e2e:editor          # 10 real-Chrome checks: bracket closing, suggestions, Format (dev server only, no backend/Docker)
-cd fe && npm test                    # 209 unit (vitest)
+cd fe && npm test                    # 242 unit (vitest)
+cd fe && npm run e2e:assistant       # 15 real-Chrome checks of the AI drawer against its OWN mock backend on :5000 (stop the real backend; APP_URL=<your dev server>)
 cd fe && npm run e2e:diagrams      # 23 real-Chrome checks: arrays, pointers, lists, trees, STL, leaks, timeline, hover, shortcuts, ranges, matrices (same prerequisites as e2e)
 node bk/runner/check_heap_cache.js   # heap cache off vs on must give identical step records (needs Docker + image); run after ANY tracer/values.py change
 cd fe && npm run e2e                 # 16 checks in real Chrome (needs backend, dev server, Docker, runner image);
@@ -216,9 +229,41 @@ Docker Desktop must be started manually for runner work. `node --test` needs a g
   suggestion must wait first. A whitespace-only line vanishes under `trimEnd().filter(Boolean)`: assert on raw lines.
 - 2026-10-12: port 5173 "EACCES" on Windows was an old node process already listening (not a reserved port range); `taskkill`
   said access denied (elevated), so it had to be killed from an admin shell. Check `netstat -ano | grep :5173` first.
+- 2026-10-12: adding closeBrackets/autocomplete broke `e2e/smoke.mjs` (it entered code with `keyboard.type`, so typed `{` gained a `}`
+  and Enter accepted suggestions): a timeout in a run-a-program check, found only because I ran the OLD suite after changing the editor.
+  After any input-behaviour change re-run EVERY browser script, and enter test programs by paste (`diagrams.mjs` / `editor.mjs` do).
+- 2026-10-12: my "port in use" check bound the port, and on Windows a bind to 127.0.0.1 succeeds while another process holds
+  0.0.0.0, so a stale server went undetected (measured: second start announced "ready"). Probe by CONNECTING to 127.0.0.1 and ::1.
+- 2026-10-12: built a JSON request with `printf '...\\n...'` for curl and got a fake `compile_error` (the escaping trap again). For a
+  real request use the browser script or a file written by a tool, not nested shell escapes.
+
+- 2026-10-13 (AI assistant): my first browser run "passed" against ANOTHER PROJECT ("DataQuesters") that was listening on :5173. Before
+  trusting a browser pass, check what the page is (title/screenshot) and start CVis's own Vite on a free port (`npx vite --port 5199
+  --strictPort`); never kill what you did not start. The backend only allows the `localhost:5173` origin: another dev port needs
+  `FRONTEND_ORIGIN=http://localhost:PORT` on the backend, or every request is silently blocked and the check times out.
+- 2026-10-13: a status request fired at page load made `e2e/editor.mjs` fail (a console error whenever no backend runs). A new network
+  call at startup breaks every script that runs without a backend; fetch lazily. Adding a shortcut also broke the exact-count check in
+  `diagrams.mjs` (10 -> 11): after ANY top-bar / key-handler change re-run ALL FOUR browser scripts, not just the new one.
+- 2026-10-13: a "performance fix" (WeakMap of formatted values) made the worst case 7x slower (2.8 s vs 0.4 s). Measure the case the
+  fix is for AND the case it is not for, before and after (scratchpad `bench.js`). A question used to block the server's event loop
+  ~1.7 s on a 5,000-step run; the run-wide parts are now computed once per run (306 ms first, 0 ms after).
+- 2026-10-13: wrote an assertion ending in `|| true` and an ordering test that passed with the sort removed (insertion order matched by
+  luck). Break the code on purpose: a surviving mutant means the test does not test it; also keep mutants of "pure optimisations" in
+  mind (they correctly survive).
+- 2026-10-13: `node -e '...'` with `\\(` regexes inside bash single quotes lost its backslashes AGAIN (nothing was written because the
+  script threw before `writeFileSync`; keep that order). Big heredocs with many backticks/quotes can also fail to parse as a whole:
+  use the Edit tool (or a file written by Write) instead.
+- 2026-10-13: GateGuard denies the FIRST Write/Edit of every file whatever it contains; the second attempt passes. Send a cheap probe
+  (a one-line Write, or an Edit that adds a blank line) first, then the real content, instead of paying for the big content twice.
+- 2026-10-13: the harness compresses long command output and DROPS WORDS ("STEP 32 63 2) 8 BEFORE"): to read a prompt or a log exactly,
+  write it to a file and open it with the Read tool. No Agent tool was available in this session, so code-reviewer / security-reviewer
+  could NOT be run on the assistant; the review was done by hand (key redaction in logs, event-loop cost). Run them next session.
+- 2026-10-13: a call is recorded as a whole new frame (`changes: ["f1"]`), not as `f1.vars.n`: anything that lists "what changed" must
+  expand whole-frame changes, or a call's arguments are never reported. Found by a test written from the model's point of view.
 
 ## Key decisions
-See `docs/DECISIONS.md` (D-001…D-034; D-034 pointer tags, range and matrix guesses; D-031 orphans judged by look-ahead, D-032 bug spotlight wording rules, D-033 heap-block cache; Phase 4 added D-024 step identity, D-025 return = step + return value, D-026
+See `docs/DECISIONS.md` (D-001…D-041; D-037 the assistant reads a run the SERVER holds (`traceId`), D-038 one call per question over a built context,
+D-039 answers are verified and problems shown, D-040 off by default / off when shared / limits, D-041 the drawer, 1-based step text, lazy status; D-034 pointer tags, range and matrix guesses; D-031 orphans judged by look-ahead, D-032 bug spotlight wording rules, D-033 heap-block cache; Phase 4 added D-024 step identity, D-025 return = step + return value, D-026
 unbuffered stdout; Phases 5-9 added D-027 heap allocation log, D-028 typed value tree + heap deltas, D-029 shapes from
 data, D-030 measured arrows). D-002 and D-003 were confirmed by the Phase 1 spike. D-035 (2026-10-12): editor help, closeBrackets,
 regex name suggestions, clang-format WASM.

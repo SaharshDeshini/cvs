@@ -1,0 +1,9 @@
+{
+  "name": "cvis",
+  "version": "1.0.0",
+  "private": true,
+  "description": "C++ code visualization: write code, run it, step through it.",
+  "scripts": {
+    "start": "node scripts/start.js"
+  }
+}

@@ -77,3 +77,14 @@ both loopback spellings of `:5173`). Layout: `src/lib` = pure logic with tests (
 `status`, `normalize`, `api`), `src/components` = presentation, `src/App.jsx` = state, playback timer and shortcuts.
 Rule for the UI: program-derived text (names, values, stdout, stderr, compiler output) is only ever rendered as a
 React text node, and variable names are data, not object keys on plain objects.
+
+## AI assistant setup (added 2026-10-13)
+
+- Key: free from https://aistudio.google.com/apikey. Put `GEMINI_API_KEY=...` in `bk/.env` (git-ignored; `bk/.env.example` lists every
+  option) and restart the backend: the settings are read on the first request after a start. No key = the assistant is off, and
+  `GET /api/ai/status` says why.
+- Testing without a key: `cd bk && npm test` (a fake `fetch` and a fake Gemini HTTP server); `cd fe && npm run e2e:assistant` (a mock
+  backend on :5000, so the real backend must be stopped first).
+- Dev ports: the backend only accepts the `localhost:5173` / `127.0.0.1:5173` origins. A dev server on another port needs
+  `FRONTEND_ORIGIN=http://localhost:PORT` on the backend. Check what answers on 5173 first: it may be a different project.
+- A server restart forgets the runs it traced; the panel then says "Press Run again".

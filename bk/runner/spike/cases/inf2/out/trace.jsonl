@@ -1,0 +1,4 @@
+{"t": "step", "n": 0, "line": 2, "fn": "main", "depth": 1, "stdoutLen": 0, "event": "step", "frames": [{"fn": "main", "line": 2, "vars": {"i": {"type": "volatile int", "value": "32766", "kind": "int"}}}]}
+{"t": "step", "n": 1, "line": 4, "fn": "main", "depth": 1, "stdoutLen": 0, "event": "step", "frames": [{"fn": "main", "line": 4, "vars": {"i": {"type": "volatile int", "value": "0", "kind": "int"}}}]}
+{"t": "skip", "line": 4, "reason": "insn_cap"}
+{"t": "end", "status": "line_timeout", "exitCode": null, "signal": "SIGINT", "line": 4}

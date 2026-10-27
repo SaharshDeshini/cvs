@@ -219,7 +219,8 @@ await check("keys: End, PageDown/PageUp, and [ ] jump between steps and problems
   assert.match(await readout(), /^25 \/ 41/);
   await page.evaluate(() => document.activeElement?.blur());
   await page.click(".shortcuts summary");
-  assert.equal(await count(".shortcut-row"), 10);
+  assert.equal(await count(".shortcut-row"), 11); // 10 stepping/run keys + Alt+A for the AI assistant
+  assert.ok((await texts(".shortcut-row dd")).includes("Open / close the AI assistant"));
   await shot("shortcuts");
 });
 

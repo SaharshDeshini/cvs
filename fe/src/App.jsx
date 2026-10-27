@@ -1,4 +1,5 @@
 import { Component, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import AiPanel from "./components/AiPanel";
 import CodeEditor from "./components/CodeEditor";
 import Controls from "./components/Controls";
 import HeapView from "./components/HeapView";
@@ -20,6 +21,7 @@ import { buildDiagram } from "./lib/memoryGraph";
 import { initialState, playerReducer, stepDelayMs } from "./lib/playerReducer";
 import { stdoutAt } from "./lib/reconstruct";
 import { chipFor } from "./lib/status";
+import { useAssistant } from "./lib/useAssistant";
 
 const SAMPLE_CODE = `#include <iostream>
 
@@ -47,6 +49,7 @@ const isTypingTarget = (target) => TEXT_FIELDS.has(target.tagName) || Boolean(ta
 
 const SHORTCUTS = [
   [["Ctrl", "Enter"], "Run the program"],
+  [["Alt", "A"], "Open / close the AI assistant"],
   [["←"], "Previous step"],
   [["→"], "Next step"],
   [["Space"], "Play / pause"],
@@ -162,7 +165,7 @@ function functionsWithMid(views) {
   return names;
 }
 
-function Visualization({ state, isStale, bugs, lifetimes, onSeek }) {
+function Visualization({ state, isStale, bugs, lifetimes, onSeek, onExplainStep, onExplainOutcome }) {
   const { trace, views, index } = state;
   const view = views[index];
   const searchFns = useMemo(() => functionsWithMid(views), [views]);
@@ -171,10 +174,10 @@ function Visualization({ state, isStale, bugs, lifetimes, onSeek }) {
   const hasNothing = trace.status === "ok" && views.length === 0 && !trace.stdout && !trace.stderr;
   return (
     <>
-      <StatusBanner trace={trace} />
+      <StatusBanner trace={trace} onExplain={onExplainOutcome} />
       {hasNothing && <div className="banner is-notice" role="status">The program finished without any steps to show.</div>}
       {isStale && <div className="banner is-notice" role="status">The code changed since this run. Press Run to trace the new version.</div>}
-      {view && <StepNarration caption={caption} index={index} bugs={bugs} onSeek={onSeek} />}
+      {view && <StepNarration caption={caption} index={index} bugs={bugs} onSeek={onSeek} onExplain={onExplainStep} />}
       {view && <Diagram view={view} previous={views[index - 1] ?? null} verdicts={lifetimes[index]} searchFns={searchFns} />}
       {(view || trace.stdout || trace.stderr) && (
         <OutputPanel
@@ -197,6 +200,7 @@ export default function App() {
   const latest = useRef({ code, stdin, phase: state.phase });
   latest.current = { code, stdin, phase: state.phase };
   const stepContext = useRef({ index: 0, bugs: NO_BUGS }); // what the [ and ] keys need, without re-binding the key listener each step
+  const toggleAssistant = useRef(() => {}); // set below once the assistant hook exists; Alt+A calls it
 
   const handleRun = useCallback(async () => {
     if (latest.current.phase === "loading") return;
@@ -237,6 +241,9 @@ export default function App() {
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
         event.preventDefault();
         handleRun();
+      } else if (event.altKey && !event.ctrlKey && !event.metaKey && event.code === "KeyA") {
+        event.preventDefault();
+        toggleAssistant.current();
       } else if (event.altKey && event.key === "ArrowRight") {
         event.preventDefault();
         dispatch({ type: "step/next" });
@@ -280,6 +287,14 @@ export default function App() {
   );
   stepContext.current = { index: state.index, bugs };
   const seekStep = useCallback((step) => dispatch({ type: "step/seek", index: step }), []);
+  // The assistant talks about the LAST traced run (the server holds it by id), even while the editor text has moved on.
+  const traceId = state.phase === "ready" ? (state.trace.traceId ?? null) : null;
+  const assistant = useAssistant({ traceId, bugs });
+  toggleAssistant.current = assistant.toggle;
+  const assistantRun = { traceId, traceStatus: state.phase === "ready" ? state.trace.status : "idle", stepIndex: state.index, total: state.views.length, isStale, hasFindings: bugs.length > 0 };
+  const explainStep = assistant.available ? () => assistant.ask({ kind: "step", step: state.index }) : undefined;
+  const explainOutcome = assistant.available ? () => assistant.ask({ kind: "error" }) : undefined;
+  const assistantTone = assistant.status.enabled ? "on" : assistant.status.phase === "checking" ? "idle" : "off"; // "idle": not asked yet
   // the faint "sum = 6   x = 7" label after the line that is about to run, from the run's own source text
   const inlineText = useMemo(() => {
     if (currentLine === null || codeAtRun === null) return null;
@@ -294,11 +309,14 @@ export default function App() {
       <header className="topbar">
         <h1 className="wordmark">CVis <span className="wordmark-sub">see what your C++ does</span></h1>
         <div className="topbar-right">
+          <button type="button" className={`ai-toggle${assistant.open ? " is-open" : ""}`} onClick={assistant.toggle} aria-pressed={assistant.open} title="Ask the AI assistant (Alt+A)">
+            <span className={`ai-dot ai-dot-${assistantTone}`} aria-hidden="true" /> Ask AI
+          </button>
           <ShortcutHelp />
           <span className={`chip chip-${chip.tone}`} aria-live="polite">{chip.label}</span>
         </div>
       </header>
-      <main className="workspace">
+      <main className={`workspace${assistant.open ? " has-assistant" : ""}`}>
         <section className="pane pane-editor" aria-label="Editor">
           <CodeEditor initialCode={SAMPLE_CODE} onChange={setCode} onRun={handleRun} currentLine={currentLine} errorLines={errorLines} inlineText={inlineText} />
           <details className="stdin">
@@ -312,10 +330,11 @@ export default function App() {
           {state.phase === "failed" && <div className="banner is-problem" role="alert"><strong>Could not run</strong><span className="banner-message"> — {state.error}</span></div>}
           {state.phase === "ready" && (
             <VisualizationBoundary key={state.trace.steps.length + state.trace.status + state.trace.stdout.length}>
-              <Visualization state={state} isStale={isStale} bugs={bugs} lifetimes={lifetimes} onSeek={seekStep} />
+              <Visualization state={state} isStale={isStale} bugs={bugs} lifetimes={lifetimes} onSeek={seekStep} onExplainStep={explainStep} onExplainOutcome={explainOutcome} />
             </VisualizationBoundary>
           )}
         </section>
+        {assistant.open && <AiPanel assistant={assistant} run={assistantRun} onSeek={seekStep} onClose={() => assistant.setOpen(false)} />}
       </main>
       <Controls
         phase={state.phase}

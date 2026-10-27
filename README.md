@@ -3,7 +3,7 @@
 Write C++ on the left, run it, and step through what the program actually did on the right: variables,
 arrays, pointers, heap objects, calls. State comes from **real execution**, never from an AI guess.
 
-## Status (2026-10-08): Phases 0-9 done — the data-structure diagrams (arrays, pointers & arrows, heap, linked lists, trees, STL) work in the browser; next: Phase 10 (step compression)
+## Status (2026-10-13): Phases 0-9 done, plus the AI assistant (D-037..D-041) — the data-structure diagrams work in the browser and an optional Gemini-powered assistant explains the real run; next: Phase 10 (step compression)
 
 What exists and works today:
 
@@ -49,19 +49,56 @@ What exists and works today:
   between a `left` and a `right` pointer are lit in a linked list. `int m[3][4]` and `vector<vector<int>>` are drawn as
   grids with row and column numbers and the active cell highlighted. Ranges and row/column markers are **guessed from
   variable names** (lo/hi, left/right, i/j...) and say so; the pointer tags are facts from real addresses.
-- 73 unit + 48 integration backend tests; 190 frontend unit tests; 16 + 23 real-Chrome checks (the 23 in
-  `fe/e2e/diagrams.mjs` read lists, trees, arrows, STL, leaks, the timeline and hover tracing off the page).
+- **AI assistant (optional, D-037..D-041):** an **Ask AI** drawer (top bar, or `Alt+A`) that answers questions about the
+  run you are looking at, using Google's Gemini API. It is a narrator, not an oracle: the backend keeps every run it traced
+  and builds the model's context itself (the numbered source, how the run ended, every call and return, a timeline of each
+  variable's changes, and a detailed snapshot of the current step), so the browser can never hand the model a forged run.
+  One model call per question. **Explain step N**, **Explain the compile error / Why did it crash? / Why didn't it finish?**,
+  free chat (with the earlier turns), and a Beginner / Standard / Expert level. Answers cite steps as chips that jump the
+  timeline, and every answer is **checked**: a step reference that does not exist is removed, and a number or address it
+  quotes that appears nowhere in the run is listed under the answer ("could not find `4242` in the run data").
+  Off by default and off when the server is shared (`--share`, no login) unless you opt in. Your code and its run data are
+  sent to Google when you ask. Setup is below; the one-line caption under the controls stays as the offline baseline.
+- 146 unit + 48 integration backend tests; 242 frontend unit tests; 16 + 23 + 10 + 15 real-Chrome checks (the 23 in
+  `fe/e2e/diagrams.mjs` read lists, trees, arrows, STL, leaks, the timeline and hover tracing off the page; the 15 in
+  `fe/e2e/assistant.mjs` drive the assistant panel against a mock backend).
 - Heap blocks are cached by raw bytes in the tracer (D-033): a 200-node list traces at ~140 steps/s instead of ~85, and
   `node bk/runner/check_heap_cache.js` proves the output is identical to the uncached tracer.
 
-What does **not** exist yet: globals/statics in the diagrams, step compression for very long runs, AI explanations,
-a light theme, step over/into/out. Known limits (measured; details in [docs/RESEARCH.md](docs/RESEARCH.md) → Phases
+What does **not** exist yet: globals/statics in the diagrams, step compression for very long runs, streaming answers
+(the assistant replies when it is done), a light theme, step over/into/out. **Not yet tried with a real API key**: the
+Gemini wire format was read from Google's docs and is tested against a fake server only (D-037); the first real question
+is the real test. Known limits (measured; details in [docs/RESEARCH.md](docs/RESEARCH.md) → Phases
 5-9): arrays show the first 64 cells, the heap view stops at 150 blocks, tracing is ~140 steps/s with a 200-node heap
 (~750 steps/s for plain code), a `unique_ptr` chain is drawn as a generic linked structure, and hover tracing needs a
 mouse. Local use only — never expose publicly (see
 [docs/DECISIONS.md](docs/DECISIONS.md) D-010). Architecture and schema: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-Try it (Docker Desktop must be running):
+**Run it with one command** (Docker Desktop must be running; from the project folder):
+
+```bash
+npm start                # http://127.0.0.1:5000, this computer only
+npm start -- --share     # also reachable from your phone/laptop on the same network or Tailscale (prints the addresses)
+PORT=5001 npm start      # another port
+```
+
+It installs missing dependencies, rebuilds the frontend when its source changed, builds the runner image the first time,
+warns if Docker is down, refuses a port that is already in use, then starts the backend, which also serves the built
+frontend (one process, one port, no CORS). `--share` has no login: use it on a private network or Tailscale only, never
+port-forward it.
+
+**Turn on the AI assistant** (free; takes a minute):
+
+1. Get a free key at [Google AI Studio](https://aistudio.google.com/apikey).
+2. Put it in `bk/.env` (git-ignored; `bk/.env.example` lists every setting): `GEMINI_API_KEY=your-key`
+3. Restart the backend (`npm start`). Open **Ask AI** in the top bar: it says whether the assistant is on, and if not, exactly why.
+
+Optional settings: `GEMINI_MODEL` (default `gemini-2.5-flash`, a model listed with a free tier), `AI_RATE_PER_MINUTE` (8),
+`AI_DAILY_LIMIT` (150), `AI_MAX_CONCURRENT` (2), `AI_TIMEOUT_MS` (30000), `AI_ENABLED=0` (force off), `AI_ALLOW_SHARE=1`
+(allow it with `--share`; that mode has no login, so anyone on the network could spend your key). The free-tier quota is yours
+to check in AI Studio; the defaults are deliberately under it.
+
+Development setup (hot reload, Docker Desktop must be running):
 
 ```bash
 cd bk/runner && docker build -t cvis-runner:2 .       # once
@@ -69,14 +106,16 @@ cd .. && npm install && npm run dev                    # backend on PORT (defaul
 cd ../fe && npm install && npm run dev                # frontend on http://localhost:5173 (open this)
 curl -X POST http://localhost:5000/api/trace -H "Content-Type: application/json" \
   -d '{"code":"int main(){int a=1; a=a+1; return 0;}"}'
-cd ../bk && npm test && npm run test:integration      # backend: 73 unit, 48 runner-backed
+cd ../bk && npm test && npm run test:integration      # backend: 146 unit, 48 runner-backed
 node runner/check_heap_cache.js                       # heap cache on vs off must give identical traces (needs Docker)
-cd ../fe && npm test                                  # frontend: 190 unit
+cd ../fe && npm test                                  # frontend: 242 unit
 cd ../fe && npm run e2e                               # 16 real-Chrome checks (backend + dev server must be running;
                                                       # if 127.0.0.1:5173 is refused: APP_URL=http://localhost:5173/ npm run e2e)
 cd ../fe && npm run e2e:diagrams                      # 23 real-Chrome checks of the arrays / pointers / lists / trees / STL / leaks / timeline
                                                       # (rebuild the runner image first after any change under bk/runner)
 cd ../fe && npm run e2e:editor                        # 10 real-Chrome checks of bracket closing, suggestions, Format (dev server only)
+cd ../fe && npm run e2e:assistant                     # 15 real-Chrome checks of the AI panel; runs its OWN mock backend on :5000, so stop the real one
+                                                      # first (no key, no Docker needed)
 ```
 
 **Security:** this executes arbitrary C++. User code runs only inside the runner container, never on the host.

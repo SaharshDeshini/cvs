@@ -234,3 +234,41 @@ until the security phase.
   unbounded; both fixed with tests that fail without the fix.
 - **Honest limits:** 64-cell window, 150-block heap, ~90 steps/s with a large heap (cache by raw bytes is the next
   optimisation), no globals, guest can forge its own heap log (only its own diagram).
+
+## The AI assistant (2026-10-13)
+
+**What it is, in one breath.** A chat drawer that explains the run you are looking at, using Google's Gemini free tier. The product's
+rule is "an AI may only explain verified trace data", so the design question was how to make that true by construction.
+
+**Key decisions and why.**
+- The server keeps every run it traced and the browser sends only an id. The model's context is built from the server's copy, so a
+  client cannot invent a run for the model to explain. (Trade-off: a server restart forgets runs; the UI says "Run again".)
+- One model call per question, with the context built by code (source, how the run ended, every call and return, a timeline of each
+  variable, a snapshot of the current step) instead of letting the model call tools. Free tiers count requests, so a 3-call question
+  costs 3x, and I could not confirm the tool-calling format without a key.
+- Every answer is checked. The model must cite steps (`[[step:3]]`); a citation to a step that does not exist is removed, and a number
+  it quotes that appears nowhere in the run is shown to the user as unverified. The limit is stated: this proves a value exists in
+  the run, not that the explanation is right.
+- Off unless a key is set, off when the server is shared (no login there), rate limited, cached, and the key never reaches a log, a
+  URL, an error, or the browser.
+
+**Problems found while building it (and how).**
+- My own test said a call's arguments had "changed" but the context did not list them: a call is recorded as a whole new frame
+  (`f1`), not per variable. A test written from the user's point of view found it.
+- The UI counts steps from 1 and my context from 0: the model would have said "step 2" next to a chip saying "Step 3". Fixed before
+  shipping; the API stays 0-based, the text is 1-based.
+- A "performance fix" made the worst case 7x slower (2.8 s against 0.4 s) because a WeakMap costs more than it saves when nothing is
+  shared. I measured before and after, then replaced it with an identity check: 306 ms the first time, 0 ms after. Before any fix, a
+  question blocked the whole server for about 1.7 s on a big run.
+- The first browser run "passed" against the wrong application: another project was listening on port 5173. Looking at the
+  screenshot caught it. Then CORS (the backend trusts one origin) kept the real app from the test backend.
+- An existing browser check failed because my status request fired at page load with no backend running. The fix (ask only when
+  needed) is also the better design.
+- A mutation test survived: my "live variables first" assertion passed even with the sorting removed, because insertion order matched
+  by luck. I rewrote it around a case where it matters.
+
+**Numbers.** 67 new backend and 33 new frontend unit tests, 15 new browser checks; the 48 integration tests and 49 older browser
+checks still pass; real runs through Docker: five programs, all answered, every planted fake value caught.
+
+**Honest gap.** Never run against a real Gemini key. The request/response shape comes from the docs and a fake server. The first real
+question is the real test (what to look at is listed in RESEARCH.md → Assistant).

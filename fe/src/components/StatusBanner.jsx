@@ -9,7 +9,7 @@ const TITLES = Object.freeze({
 });
 
 /** Result banner for non-ok traces. Compile diagnostics are listed with their lines. */
-export default function StatusBanner({ trace }) {
+export default function StatusBanner({ trace, onExplain }) {
   if (trace.status === "ok") return null;
   const isProblem = trace.status !== "truncated";
   const message = bannerMessage(trace);
@@ -17,6 +17,7 @@ export default function StatusBanner({ trace }) {
     <div className={`banner ${isProblem ? "is-problem" : "is-notice"}`} role="alert">
       <strong>{TITLES[trace.status] ?? "Unexpected result"}</strong>
       {message && <span className="banner-message"> — {message}</span>}
+      {onExplain && <button type="button" className="ai-explain" onClick={onExplain} title="Ask the AI assistant to explain this">Explain with AI</button>}
       {trace.status === "compile_error" && trace.compileErrors.length > 0 && (
         <ul className="diagnostics">
           {trace.compileErrors.map((d, i) => (
